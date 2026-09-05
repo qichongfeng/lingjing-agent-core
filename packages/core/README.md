@@ -68,7 +68,7 @@ for await (const event of run.events) {
       break;
   }
 }
-const messages = await run.result; // full Message[] when the run settles
+const finalMessage = await run.done; // settles with the final assistant Message
 ```
 
 ## API

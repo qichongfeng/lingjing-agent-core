@@ -31,15 +31,6 @@ importers:
         specifier: ^22.0.0
         version: 22.20.1
 
-  packages/browser:
-    dependencies:
-      '@lingjing/agent-core':
-        specifier: workspace:*
-        version: link:../core
-      '@lingjing/provider-openai':
-        specifier: workspace:*
-        version: link:../provider-openai
-
   packages/core:
     devDependencies:
       zod:
