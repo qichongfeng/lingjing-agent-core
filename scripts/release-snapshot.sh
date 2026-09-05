@@ -4,7 +4,6 @@
 # 可用环境变量:TOOLX_DIR(默认 ~/lib/web/tooolx-prompt)
 set -euo pipefail
 cd "$(dirname "$0")/.."
-export npm_config_manage_package_manager_versions=false
 TOOLX_DIR="${TOOLX_DIR:-$HOME/lib/web/tooolx-prompt}"
 
 # 1. 计算下一个 beta 号(0.1.0-beta.3 → 0.1.0-beta.4;无 beta 段则追加 -beta.1)
