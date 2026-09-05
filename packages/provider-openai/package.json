@@ -1,0 +1,36 @@
+{
+  "name": "@lingjing/provider-openai",
+  "version": "0.1.0",
+  "description": "OpenAI Chat Completions adapter for @lingjing/agent-core.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@lingjing/agent-core": "workspace:*"
+  },
+  "dependencies": {
+    "@lingjing/agent-core": "workspace:*"
+  }
+}

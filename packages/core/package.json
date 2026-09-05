@@ -1,0 +1,36 @@
+{
+  "name": "@lingjing/agent-core",
+  "version": "0.1.0",
+  "description": "Runtime-agnostic, provider-agnostic agent core: agentic loop, tools, memory, streaming events.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md"],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "zod": ">=3.23.0"
+  },
+  "peerDependenciesMeta": {
+    "zod": { "optional": true }
+  },
+  "devDependencies": {
+    "zod": "^3.23.0"
+  }
+}

@@ -1,0 +1,30 @@
+<view class="container">
+  <scroll-view
+    class="messages"
+    scroll-y
+    scroll-into-view="{{scrollTo}}"
+    scroll-with-animation
+  >
+    <view
+      wx:for="{{messages}}"
+      wx:key="index"
+      id="msg-{{index}}"
+      class="msg {{item.role}}"
+    >
+      <text user-select>{{item.text}}</text>
+    </view>
+  </scroll-view>
+
+  <view class="input-bar">
+    <input
+      class="input"
+      value="{{input}}"
+      placeholder="说点什么"
+      bindinput="onInput"
+      confirm-type="send"
+      bindconfirm="send"
+    />
+    <button wx:if="{{sending}}" class="btn" type="warn" bindtap="stop">停止</button>
+    <button wx:else class="btn" type="primary" disabled="{{!input}}" bindtap="send">发送</button>
+  </view>
+</view>

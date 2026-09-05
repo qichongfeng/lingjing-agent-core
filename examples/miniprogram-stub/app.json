@@ -1,0 +1,10 @@
+{
+  "pages": ["pages/chat/chat"],
+  "window": {
+    "navigationBarTitleText": "agent-core demo",
+    "backgroundTextStyle": "light",
+    "navigationBarBackgroundColor": "#ffffff",
+    "navigationBarTextStyle": "black"
+  },
+  "sitemapLocation": "sitemap.json"
+}

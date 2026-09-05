@@ -1,0 +1,4 @@
+{
+  "desc": "lingjing-agent-core miniprogram stub",
+  "rules": [{ "action": "allow", "page": "*" }]
+}
