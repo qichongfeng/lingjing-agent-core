@@ -3,7 +3,7 @@
 // header). Mirrors the provider-openai helper so adapters stay symmetrical.
 // Pure + unit-testable: takes the raw error and reads a Headers-like `.headers`.
 
-import type { ProviderError } from "@lingjing/agent-core";
+import type { ProviderError } from "@lingjing-agent/core";
 import { parseRetryAfter } from "./parse-retry-after.js";
 
 /** Adapter-known retryable HTTP statuses (matches core's isRetryable set). */

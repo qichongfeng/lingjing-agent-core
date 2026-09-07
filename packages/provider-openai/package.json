@@ -1,7 +1,7 @@
 {
-  "name": "@lingjing/provider-openai",
+  "name": "@lingjing-agent/provider-openai",
   "version": "0.1.0-beta.1",
-  "description": "OpenAI Chat Completions adapter for @lingjing/agent-core.",
+  "description": "OpenAI Chat Completions adapter for @lingjing-agent/core.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -33,9 +33,9 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@lingjing/agent-core": "workspace:*"
+    "@lingjing-agent/core": "workspace:*"
   },
   "dependencies": {
-    "@lingjing/agent-core": "workspace:*"
+    "@lingjing-agent/core": "workspace:*"
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { HttpTransport, HttpTransportResponse, ProviderChunk, ProviderRequest, Tool } from "@lingjing/agent-core";
+import type { HttpTransport, HttpTransportResponse, ProviderChunk, ProviderRequest, Tool } from "@lingjing-agent/core";
 import { mapStop } from "../src/map-stop.js";
 import { mapUsage } from "../src/map-usage.js";
 import { mapRequest } from "../src/map-request.js";

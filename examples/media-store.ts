@@ -10,10 +10,10 @@
 //                         (从对象存储 download)→ 模型仍能看历史图(多轮针对同一图讨论)。
 //
 // 跑(Node,无网络,验证 store 行为):
-//   pnpm --filter @lingjing/example-demo demo:media-store
+//   pnpm --filter @lingjing-agent/example-demo demo:media-store
 
-import { InMemoryStore, type MemoryStore, type Message } from "@lingjing/agent-core";
-import type { Content } from "@lingjing/agent-core";
+import { InMemoryStore, type MemoryStore, type Message } from "@lingjing-agent/core";
+import type { Content } from "@lingjing-agent/core";
 
 // ---------------------------------------------------------------------------
 // StorageAdapter —— 把 base64 媒体存到/取自对象存储(小程序云存储 / OSS / S3 / mock)。

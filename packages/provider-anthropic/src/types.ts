@@ -1,5 +1,5 @@
 // Anthropic Messages API wire types (POST /v1/messages). These are
-// Anthropic-specific shapes; the provider-neutral types live in @lingjing/agent-core.
+// Anthropic-specific shapes; the provider-neutral types live in @lingjing-agent/core.
 // Field names mirror the Anthropic API (snake_case, content_block_*, etc.) — the
 // map/* helpers translate to/from core's neutral shapes.
 

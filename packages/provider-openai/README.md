@@ -1,6 +1,6 @@
-# @lingjing/provider-openai
+# @lingjing-agent/provider-openai
 
-OpenAI Chat Completions adapter for [`@lingjing/agent-core`](../core).
+OpenAI Chat Completions adapter for [`@lingjing-agent/core`](../core).
 
 **Speaks the OpenAI Chat Completions protocol — not just OpenAI's own API.** Set
 `baseURL` to ANY compatible endpoint: OpenAI (`api.openai.com/v1`), DeepSeek
@@ -17,14 +17,14 @@ core's loop, not duplicated here.
 ## Install
 
 ```sh
-pnpm add @lingjing/agent-core @lingjing/provider-openai
+pnpm add @lingjing-agent/core @lingjing-agent/provider-openai
 ```
 
 ## Usage
 
 ```ts
-import { createAgent } from "@lingjing/agent-core";
-import { OpenAIProvider } from "@lingjing/provider-openai";
+import { createAgent } from "@lingjing-agent/core";
+import { OpenAIProvider } from "@lingjing-agent/provider-openai";
 
 const agent = createAgent({
   provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),

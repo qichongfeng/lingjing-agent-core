@@ -1,4 +1,4 @@
-import type { TokenUsage } from "@lingjing/agent-core";
+import type { TokenUsage } from "@lingjing-agent/core";
 import type { OpenAIUsage } from "./types.js";
 
 export function mapUsage(u: OpenAIUsage | null | undefined): TokenUsage {

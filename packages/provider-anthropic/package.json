@@ -1,7 +1,7 @@
 {
-  "name": "@lingjing/provider-anthropic",
+  "name": "@lingjing-agent/provider-anthropic",
   "version": "0.0.0",
-  "description": "Anthropic Messages adapter for @lingjing/agent-core.",
+  "description": "Anthropic Messages adapter for @lingjing-agent/core.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -22,9 +22,9 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@lingjing/agent-core": "workspace:*"
+    "@lingjing-agent/core": "workspace:*"
   },
   "dependencies": {
-    "@lingjing/agent-core": "workspace:*"
+    "@lingjing-agent/core": "workspace:*"
   }
 }

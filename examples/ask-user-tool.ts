@@ -10,7 +10,7 @@
 //   2. 微信小程序 wx.showModal / wx.showActionSheet(注释块,复制到小程序工程用)
 //
 // 跑(Node,交互式):
-//   pnpm --filter @lingjing/example-demo demo:ask-user
+//   pnpm --filter @lingjing-agent/example-demo demo:ask-user
 //   (模拟模型调 ask_user → readline 真实问终端 → 模型继续)
 
 import * as readline from "node:readline/promises";
@@ -21,7 +21,7 @@ import {
   type ProviderChunk,
   type StopReason,
   type Tool,
-} from "@lingjing/agent-core";
+} from "@lingjing-agent/core";
 
 // ---------------------------------------------------------------------------
 // ask_user 工具(Node readline 版)

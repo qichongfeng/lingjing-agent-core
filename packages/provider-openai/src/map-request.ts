@@ -5,7 +5,7 @@ import {
   type ProviderRequest,
   type TextContent,
   type Tool,
-} from "@lingjing/agent-core";
+} from "@lingjing-agent/core";
 import type {
   OpenAIChatParams,
   OpenAIMessage,

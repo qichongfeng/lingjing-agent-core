@@ -4,7 +4,7 @@ import type {
   ProviderConfig,
   ProviderRequest,
   Tool,
-} from "@lingjing/agent-core";
+} from "@lingjing-agent/core";
 import type {
   AnthropicCacheControl,
   AnthropicContentBlock,

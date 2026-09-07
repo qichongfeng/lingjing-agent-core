@@ -8,5 +8,5 @@ export default defineConfig({
   sourcemap: true,
   treeshake: true,
   target: "es2022",
-  external: ["openai", "@lingjing/agent-core"],
+  external: ["openai", "@lingjing-agent/core"],
 });

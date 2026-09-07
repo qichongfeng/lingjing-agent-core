@@ -1,4 +1,4 @@
-import type { StopReason } from "@lingjing/agent-core";
+import type { StopReason } from "@lingjing-agent/core";
 
 /**
  * Map an OpenAI `finish_reason` to the core's neutral StopReason.

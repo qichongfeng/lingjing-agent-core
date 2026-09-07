@@ -3,7 +3,7 @@ import type {
   ProviderChunk,
   ProviderRequest,
   Tool,
-} from "@lingjing/agent-core";
+} from "@lingjing-agent/core";
 import { mapRequest, isOpenAISeries } from "../src/map-request.js";
 import { mapStream } from "../src/map-stream.js";
 import { mapStop } from "../src/map-stop.js";

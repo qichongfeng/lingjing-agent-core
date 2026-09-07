@@ -1,4 +1,4 @@
-import type { TokenUsage } from "@lingjing/agent-core";
+import type { TokenUsage } from "@lingjing-agent/core";
 import type { AnthropicUsage } from "./types.js";
 
 /** Map Anthropic usage (input/output + prompt-cache tokens) to core TokenUsage. */

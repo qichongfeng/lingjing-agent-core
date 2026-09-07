@@ -1,10 +1,10 @@
 # lingjing-agent-core
 
 > 通用、runtime-agnostic、provider-agnostic 的 TypeScript agent core。
-> 一份 `@lingjing/agent-core`，驱动 **Node · 浏览器/Tauri webview · Electron/Tauri 桌面端 · 微信小程序**。
+> 一份 `@lingjing-agent/core`，驱动 **Node · 浏览器/Tauri webview · Electron/Tauri 桌面端 · 微信小程序**。
 > core 提供「大脑」（agentic loop、工具、记忆、可序列化流式事件），宿主注入「手脚」（fs/shell/http/存储/UI）。
 
-**状态：Phase 3 已实现。** `@lingjing/agent-core`（loop + 工具 + CompactContextManager + RAG 注入 + redact + 事件 + HttpTransport）+ `provider-openai`（OpenAI 兼容协议,SDK-free）+ `provider-anthropic`（Anthropic Messages 协议,SDK-free）+ 微信小程序骨架 —— 全部 typecheck/测试通过/构建产出 ESM+CJS+d.ts。真实端到端需 `OPENAI_API_KEY`（见 `examples/`）。完整设计见 [`DESIGN.md`](./DESIGN.md)。
+**状态：Phase 3 已实现。** `@lingjing-agent/core`（loop + 工具 + CompactContextManager + RAG 注入 + redact + 事件 + HttpTransport）+ `provider-openai`（OpenAI 兼容协议,SDK-free）+ `provider-anthropic`（Anthropic Messages 协议,SDK-free）+ 微信小程序骨架 —— 全部 typecheck/测试通过/构建产出 ESM+CJS+d.ts。真实端到端需 `OPENAI_API_KEY`（见 `examples/`）。完整设计见 [`DESIGN.md`](./DESIGN.md)。
 
 ## 开发
 
@@ -29,9 +29,9 @@ pnpm -r build          # tsup → dist/（ESM + CJS + d.ts）
 
 ```
 packages/
-├── core/            @lingjing/agent-core      AgentRunner · Tool · Memory · Provider 接口 · Events · HttpTransport
-├── provider-openai/   @lingjing/provider-openai    **OpenAI 兼容协议**适配器（SDK-free，改 `baseURL` 连 DeepSeek/豆包/Kimi/Ollama/网关…）
-└── provider-anthropic/ @lingjing/provider-anthropic  **Anthropic Messages** 适配器（SDK-free，thinking/caching/pause_turn/context_window_exceeded）
+├── core/            @lingjing-agent/core      AgentRunner · Tool · Memory · Provider 接口 · Events · HttpTransport
+├── provider-openai/   @lingjing-agent/provider-openai    **OpenAI 兼容协议**适配器（SDK-free，改 `baseURL` 连 DeepSeek/豆包/Kimi/Ollama/网关…）
+└── provider-anthropic/ @lingjing-agent/provider-anthropic  **Anthropic Messages** 适配器（SDK-free，thinking/caching/pause_turn/context_window_exceeded）
 examples/
 ├── rag-inject-demo.ts          FakeProvider + RAG 注入（无网络）
 ├── miniprogram-transport.ts    wx.request → HttpTransport 适配器（+ self-test）
@@ -43,8 +43,8 @@ provider-agnostic：内置 `provider-openai`（OpenAI 兼容协议）+ `provider
 ## 目标用法（Node / 浏览器）
 
 ```ts
-import { createAgent } from "@lingjing/agent-core";
-import { OpenAIProvider } from "@lingjing/provider-openai";
+import { createAgent } from "@lingjing-agent/core";
+import { OpenAIProvider } from "@lingjing-agent/provider-openai";
 
 const agent = createAgent({
   provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
@@ -70,8 +70,8 @@ await done;
 小程序没有 `fetch`/`AbortController`/`ReadableStream`，但 core 的 `HttpTransport` 抽象让同一份 provider 代码零 polyfill 跑进去：
 
 ```ts
-import { createAgent } from "@lingjing/agent-core";
-import { OpenAIProvider } from "@lingjing/provider-openai";
+import { createAgent } from "@lingjing-agent/core";
+import { OpenAIProvider } from "@lingjing-agent/provider-openai";
 import { createWxTransport } from "./miniprogram-transport";
 
 const agent = createAgent({

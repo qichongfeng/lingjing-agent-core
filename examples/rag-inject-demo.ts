@@ -22,7 +22,7 @@ import {
   type ProviderChunk,
   type ProviderRequest,
   type StopReason,
-} from "@lingjing/agent-core";
+} from "@lingjing-agent/core";
 
 // Minimal no-network provider for this self-verifying demo. core's testing
 // helpers (FakeProvider / textTurn) live in core/test/helpers and are NOT a

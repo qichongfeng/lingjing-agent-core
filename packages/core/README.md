@@ -1,4 +1,4 @@
-# @lingjing/agent-core
+# @lingjing-agent/core
 
 Runtime-agnostic, provider-agnostic TypeScript agent core: agentic loop, tools,
 streaming events, context management — bring your own LLM provider.
@@ -31,14 +31,14 @@ without a global `fetch` (e.g. WeChat mini-programs, via an injectable
 ## Install
 
 ```sh
-pnpm add @lingjing/agent-core
+pnpm add @lingjing-agent/core
 ```
 
 ## Usage
 
 ```ts
-import { createAgent, defineTool } from "@lingjing/agent-core";
-import { OpenAIProvider } from "@lingjing/provider-openai";
+import { createAgent, defineTool } from "@lingjing-agent/core";
+import { OpenAIProvider } from "@lingjing-agent/provider-openai";
 
 const getTime = defineTool({
   name: "get_time",
@@ -80,7 +80,7 @@ const finalMessage = await run.done; // settles with the final assistant Message
 - `defineTool({ name, description, inputSchema, execute })` — JSON Schema or
   zod input; `execute(input, ctx)` with an abort `signal`.
 - Providers implement `LLMProvider` (`stream`, `complete`, `countTokens`);
-  see [`@lingjing/provider-openai`](../provider-openai) for a reference adapter
+  see [`@lingjing-agent/provider-openai`](../provider-openai) for a reference adapter
   that speaks the OpenAI Chat Completions protocol (works with DeepSeek, 豆包,
   通义, Kimi, 智谱, Ollama, vLLM, gateways, …).
 - `fetchTransport(fetch?)` — default HTTP transport; inject a custom

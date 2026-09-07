@@ -33,7 +33,7 @@ pnpm -r test > /dev/null 2>&1 || { echo '测试失败,已中止发版(版本号�
 
 # 4. 发布
 echo '==> 发布'
-pnpm --filter @lingjing/agent-core --filter @lingjing/provider-openai publish --no-git-checks
+pnpm --filter @lingjing-agent/core --filter @lingjing-agent/provider-openai publish --no-git-checks
 
 # 5. 提交版本变更
 git add packages pnpm-lock.yaml
@@ -43,8 +43,8 @@ git commit -m "chore: release $NEXT" > /dev/null
 if [ -d "$TOOLX_DIR" ]; then
 	echo '==> 更新 tooolx-prompt'
 	cd "$TOOLX_DIR"
-	pnpm remove @lingjing/agent-core @lingjing/provider-openai > /dev/null 2>&1 || true
-	pnpm add "@lingjing/agent-core@$NEXT" "@lingjing/provider-openai@$NEXT" > /dev/null
+	pnpm remove @lingjing-agent/core @lingjing-agent/provider-openai > /dev/null 2>&1 || true
+	pnpm add "@lingjing-agent/core@$NEXT" "@lingjing-agent/provider-openai@$NEXT" > /dev/null
 	echo "    已更新到 $NEXT"
 fi
 

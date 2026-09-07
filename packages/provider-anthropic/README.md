@@ -1,6 +1,6 @@
-# @lingjing/provider-anthropic
+# @lingjing-agent/provider-anthropic
 
-Anthropic Messages adapter for [`@lingjing/agent-core`](../core).
+Anthropic Messages adapter for [`@lingjing-agent/core`](../core).
 
 **SDK-free.** This adapter talks to the Anthropic REST API (`POST /v1/messages`)
 over core's neutral `HttpTransport` (default: global `fetch`) — no
@@ -12,14 +12,14 @@ core's loop, not duplicated here.
 ## Install
 
 ```sh
-pnpm add @lingjing/agent-core @lingjing/provider-anthropic
+pnpm add @lingjing-agent/core @lingjing-agent/provider-anthropic
 ```
 
 ## Usage
 
 ```ts
-import { createAgent } from "@lingjing/agent-core";
-import { AnthropicProvider } from "@lingjing/provider-anthropic";
+import { createAgent } from "@lingjing-agent/core";
+import { AnthropicProvider } from "@lingjing-agent/provider-anthropic";
 
 const agent = createAgent({
   provider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY }),
@@ -67,7 +67,7 @@ core's neutral `ProviderChunk` / `StopReason`.
 ## Develop
 
 ```sh
-pnpm --filter @lingjing/provider-anthropic typecheck
-pnpm --filter @lingjing/provider-anthropic test
-pnpm --filter @lingjing/provider-anthropic build
+pnpm --filter @lingjing-agent/provider-anthropic typecheck
+pnpm --filter @lingjing-agent/provider-anthropic test
+pnpm --filter @lingjing-agent/provider-anthropic build
 ```

@@ -10,7 +10,7 @@
 
 | 原则 | 含义 | 落地 |
 | --- | --- | --- |
-| **Runtime-agnostic core** | `@lingjing/agent-core` 零 Node 专属 import（`fs`/`child_process`/`stream`/`Buffer`），只用三端共有全局：`fetch`、`AbortController`/`AbortSignal`、`AsyncIterable`、`crypto.randomUUID`、`TextEncoder/TextDecoder` | Node 能力只在 `tools-node`；浏览器能力只在 `tools-web` |
+| **Runtime-agnostic core** | `@lingjing-agent/core` 零 Node 专属 import（`fs`/`child_process`/`stream`/`Buffer`），只用三端共有全局：`fetch`、`AbortController`/`AbortSignal`、`AsyncIterable`、`crypto.randomUUID`、`TextEncoder/TextDecoder` | Node 能力只在 `tools-node`；浏览器能力只在 `tools-web` |
 | **Provider-agnostic LLM 层** | `LLMProvider` 是流式 async-iterable + 中性 chunk 联合类型，**不形似任何厂商 SDK**。适配器各自翻译 | core 永不 import `@anthropic-ai/sdk`；SDK 是各适配器的 `peerDependency` |
 | **能力注入（Capability Injection）** | 工具、记忆后端、HTTP transport、权限门都是宿主提供的接口 | core 依赖接口而非实现 |
 | **事件驱动流式** | `Agent.stream()` 返回 `AsyncIterable<AgentEvent>`，每个事件 JSON 可序列化 | 宿主可直传 IPC / SSE / WebSocket；core 不用 Node `ReadableStream` |
@@ -474,11 +474,11 @@ lingjing-agent-core/                      (pnpm workspace 根)
 ├── package.json                          (仅根 devDeps: tsup, typescript, vitest, prettier, eslint)
 ├── tsconfig.base.json
 └── packages/
-    ├── core/                             @lingjing/agent-core   (零 provider-SDK 依赖)
+    ├── core/                             @lingjing-agent/core   (零 provider-SDK 依赖)
     │   ├── src/{index,types,tool,provider,events,agent,loop,context,memory,hooks,permission,schema,abort}.ts
     │   ├── src/testing/{fake-provider,stub-tools}.ts
     │   └── package.json                  peerDeps: zod@>=3.23 (optional)
-    ├── provider-openai/                  @lingjing/provider-openai     (参考实现；SDK-free，可注入 transport)
+    ├── provider-openai/                  @lingjing-agent/provider-openai     (参考实现；SDK-free，可注入 transport)
     └── memory-*                          (Phase 2+: redis / postgres / 向量)
 ```
 
@@ -488,7 +488,7 @@ lingjing-agent-core/                      (pnpm workspace 根)
 ```jsonc
 // packages/core/package.json
 {
-  "name": "@lingjing/agent-core",
+  "name": "@lingjing-agent/core",
   "type": "module",
   "exports": {
     ".":         { "types": "./dist/index.d.ts",          "import": "./dist/index.js", "require": "./dist/index.cjs" },

@@ -1,6 +1,6 @@
 // app.js — 全局 polyfill + 创建全局 agent。
 //
-// ⚠️ AbortController polyfill 必须在 require("@lingjing/agent-core") 之前执行:
+// ⚠️ AbortController polyfill 必须在 require("@lingjing-agent/core") 之前执行:
 //    core 内部会 new AbortController(),微信小程序原生没有该全局,缺则启动即崩。
 if (typeof globalThis.AbortController === "undefined") {
   globalThis.AbortController = class AbortController {
@@ -33,8 +33,8 @@ if (typeof globalThis.AbortController === "undefined") {
   };
 }
 
-const { createAgent } = require("@lingjing/agent-core");
-const { OpenAIProvider } = require("@lingjing/provider-openai");
+const { createAgent } = require("@lingjing-agent/core");
+const { OpenAIProvider } = require("@lingjing-agent/provider-openai");
 const { createWxTransport } = require("./miniprogram-transport");
 
 // TODO: 填你的 OpenAI 兼容后端(API key + baseURL)。BASE_URL 域名必须在小程序后台白名单。

@@ -1,4 +1,4 @@
-import type { StopReason } from "@lingjing/agent-core";
+import type { StopReason } from "@lingjing-agent/core";
 
 /**
  * Map an Anthropic `stop_reason` to core's neutral StopReason. Anthropic's stop

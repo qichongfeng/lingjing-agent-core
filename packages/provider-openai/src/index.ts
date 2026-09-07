@@ -1,4 +1,4 @@
-// OpenAI Chat Completions adapter for @lingjing/agent-core.
+// OpenAI Chat Completions adapter for @lingjing-agent/core.
 //
 // SDK-FREE by design: talks to the OpenAI REST API through a neutral
 // HttpTransport (default: the global `fetch`), so it has zero runtime
@@ -19,8 +19,8 @@ import type {
   ProviderResponse,
   StopReason,
   TokenUsage,
-} from "@lingjing/agent-core";
-import { fetchTransport, randomId } from "@lingjing/agent-core";
+} from "@lingjing-agent/core";
+import { fetchTransport, randomId } from "@lingjing-agent/core";
 import { mapRequest } from "./map-request.js";
 import { mapStream } from "./map-stream.js";
 import { mapStop } from "./map-stop.js";

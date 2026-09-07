@@ -1,4 +1,4 @@
-// @lingjing/agent-core — runtime-agnostic, provider-agnostic agent core.
+// @lingjing-agent/core — runtime-agnostic, provider-agnostic agent core.
 
 export type {
   Role,

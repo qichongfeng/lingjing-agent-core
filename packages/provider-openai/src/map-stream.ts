@@ -1,4 +1,4 @@
-import type { ProviderChunk } from "@lingjing/agent-core";
+import type { ProviderChunk } from "@lingjing-agent/core";
 import { mapStop } from "./map-stop.js";
 import { mapUsage } from "./map-usage.js";
 import { enrichError } from "./enrich-error.js";
@@ -29,7 +29,7 @@ interface AccTool {
 export async function* mapStream(chunks: AsyncIterable<ChatCompletionChunk>): AsyncIterable<ProviderChunk> {
   let messageId = "";
   let model = "";
-  let pendingStop: import("@lingjing/agent-core").StopReason | undefined;
+  let pendingStop: import("@lingjing-agent/core").StopReason | undefined;
   const tools = new Map<number, AccTool>();
 
   try {

@@ -4,10 +4,10 @@
 // HttpTransport 契约(body: AsyncIterable<Uint8Array>),让同一份 provider/tool 代码
 // 在小程序里零 polyfill 运行。
 //
-// 用法(小程序工程内,经「构建 npm」引入 @lingjing/agent-core 与 provider-openai):
+// 用法(小程序工程内,经「构建 npm」引入 @lingjing-agent/core 与 provider-openai):
 //
-//   import { createAgent } from "@lingjing/agent-core";
-//   import { OpenAIProvider } from "@lingjing/provider-openai";
+//   import { createAgent } from "@lingjing-agent/core";
+//   import { OpenAIProvider } from "@lingjing-agent/provider-openai";
 //   import { createWxTransport } from "./miniprogram-transport";
 //
 //   const agent = createAgent({
@@ -26,7 +26,7 @@
 //
 // 参考:https://developers.weixin.qq.com/miniprogram/dev/api/network/request/RequestTask.onChunkReceived.html
 
-import type { HttpTransport, HttpTransportResponse } from "@lingjing/agent-core";
+import type { HttpTransport, HttpTransportResponse } from "@lingjing-agent/core";
 
 /** 微信小程序最小网络类型(只覆盖本适配器用到的部分;真实工程一般用 miniprogram-api-typings,结构兼容)。 */
 export interface WxRequestTaskLike {

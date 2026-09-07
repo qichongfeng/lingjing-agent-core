@@ -1,5 +1,5 @@
 {
-  "name": "@lingjing/example-demo",
+  "name": "@lingjing-agent/example-demo",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "demo:media-store": "node --experimental-strip-types media-store.ts"
   },
   "dependencies": {
-    "@lingjing/agent-core": "workspace:*"
+    "@lingjing-agent/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"

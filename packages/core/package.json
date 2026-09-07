@@ -1,5 +1,5 @@
 {
-  "name": "@lingjing/agent-core",
+  "name": "@lingjing-agent/core",
   "version": "0.1.0-beta.1",
   "description": "Runtime-agnostic, provider-agnostic agent core: agentic loop, tools, memory, streaming events.",
   "type": "module",

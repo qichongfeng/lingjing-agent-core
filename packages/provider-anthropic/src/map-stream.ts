@@ -1,4 +1,4 @@
-import type { ProviderChunk, StopReason, TokenUsage } from "@lingjing/agent-core";
+import type { ProviderChunk, StopReason, TokenUsage } from "@lingjing-agent/core";
 import { mapStop } from "./map-stop.js";
 import { mapUsage } from "./map-usage.js";
 import { enrichError } from "./enrich-error.js";

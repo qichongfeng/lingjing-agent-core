@@ -1,13 +1,13 @@
 # lingjing-agent-core — 交接说明
 
-**通用、runtime-agnostic、provider-agnostic 的 TypeScript agent 内核。** 一份 `@lingjing/agent-core` 驱动 Node / 浏览器 / Edge / 微信小程序;core 是「大脑」(agentic loop + 工具框架 + 记忆 + 事件流),宿主注入「手脚」(provider 连哪家模型、tools 能干什么、transport 网络怎么发)。
+**通用、runtime-agnostic、provider-agnostic 的 TypeScript agent 内核。** 一份 `@lingjing-agent/core` 驱动 Node / 浏览器 / Edge / 微信小程序;core 是「大脑」(agentic loop + 工具框架 + 记忆 + 事件流),宿主注入「手脚」(provider 连哪家模型、tools 能干什么、transport 网络怎么发)。
 
 ## 仓库结构(已精简)
 ```
 packages/
-├── core/            @lingjing/agent-core       大脑 + HttpTransport(零运行时依赖,仅可选 zod)
-├── provider-openai/   @lingjing/provider-openai    OpenAI 兼容协议(SDK-free,网络可注入)
-└── provider-anthropic/ @lingjing/provider-anthropic  Anthropic Messages 协议(SDK-free,thinking/caching)
+├── core/            @lingjing-agent/core       大脑 + HttpTransport(零运行时依赖,仅可选 zod)
+├── provider-openai/   @lingjing-agent/provider-openai    OpenAI 兼容协议(SDK-free,网络可注入)
+└── provider-anthropic/ @lingjing-agent/provider-anthropic  Anthropic Messages 协议(SDK-free,thinking/caching)
 examples/
 ├── rag-inject-demo.ts         FakeProvider + RAG 注入(无网络可跑)
 ├── miniprogram-transport.ts   wx.request → HttpTransport 适配器(+ self-test)
@@ -31,8 +31,8 @@ examples/
 
 **Node / 浏览器**(默认全局 `fetch`):
 ```ts
-import { createAgent } from "@lingjing/agent-core";
-import { OpenAIProvider } from "@lingjing/provider-openai";
+import { createAgent } from "@lingjing-agent/core";
+import { OpenAIProvider } from "@lingjing-agent/provider-openai";
 
 const agent = createAgent({
   provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
