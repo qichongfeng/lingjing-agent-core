@@ -6,6 +6,8 @@ export function mapUsage(u: OpenAIUsage | null | undefined): TokenUsage {
     inputTokens: u?.prompt_tokens ?? 0,
     outputTokens: u?.completion_tokens ?? 0,
   };
+  const cached = u?.prompt_tokens_details?.cached_tokens;
+  if (typeof cached === "number" && cached > 0) usage.cacheReadTokens = cached;
   const reasoning = u?.completion_tokens_details?.reasoning_tokens;
   if (typeof reasoning === "number" && reasoning > 0) usage.reasoningTokens = reasoning;
   return usage;

@@ -58,8 +58,10 @@ const DEFAULT_BASE_URL = "https://api.openai.com/v1";
  * OpenAI Chat Completions PROTOCOL — set `baseURL` to any compatible endpoint
  * (OpenAI, DeepSeek, 豆包/火山, 通义, Kimi, 智谱, Ollama, vLLM, gateways…), not
  * just OpenAI's own API. Streaming maps OpenAI's index-keyed tool-call deltas to
- * core's id-keyed `tool_call_delta`, and defers `message_end` to the usage-only
- * final chunk (with a zeroed-usage fallback if usage never arrives).
+ * core's id-keyed `tool_call_delta`, reasoning deltas (`reasoning_content` /
+ * `reasoning`, emitted by compatible thinking models) to core `thinking_delta`
+ * chunks, and defers `message_end` to the usage-only final chunk (with a
+ * zeroed-usage fallback if usage never arrives).
  *
  * NOTE on overflow: OpenAI signals that the conversation is too long with an
  * HTTP 400 (`context_length_exceeded`) error, NOT a stop reason. So
@@ -83,6 +85,10 @@ export class OpenAIProvider implements LLMProvider {
       "context_window_exceeded",
     ] as readonly StopReason[],
     streaming: true,
+    // Thinking IS surfaced: compatible endpoints (DeepSeek R1, Kimi, GLM, Qwen,
+    // 豆包, OpenRouter) stream `reasoning_content`/`reasoning` deltas, which
+    // map to core thinking blocks. OpenAI proper keeps reasoning server-side.
+    thinking: true,
   };
 
   private readonly apiKey: string | undefined;
@@ -129,7 +135,17 @@ export class OpenAIProvider implements LLMProvider {
     const message = choice?.message;
     const textContent = message?.content ?? "";
     const blocks: Content[] = [];
-    if (textContent) blocks.push({ type: "text", text: textContent });
+    // Thinking block (compatible endpoints: DeepSeek R1 / Kimi / GLM / Qwen …)
+    // precedes the answer, mirroring the streaming chunk order.
+    const reasoning = message?.reasoning_content ?? message?.reasoning;
+    if (typeof reasoning === "string" && reasoning.length > 0) {
+      blocks.push({ type: "thinking", text: reasoning });
+    }
+    // Refusal text (safety channel) is surfaced as text alongside content.
+    const refusal = typeof message?.refusal === "string" && message.refusal.length > 0 ? message.refusal : "";
+    if (textContent || refusal) {
+      blocks.push({ type: "text", text: [textContent, refusal].filter(Boolean).join("\n") });
+    }
     for (const tc of message?.tool_calls ?? []) {
       blocks.push({
         type: "tool_call",

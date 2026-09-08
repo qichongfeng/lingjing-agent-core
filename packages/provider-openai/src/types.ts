@@ -16,8 +16,12 @@ export interface OpenAIToolCallDelta {
 export interface OpenAIChoiceDelta {
   role?: string;
   content?: string | null;
+  /** Safety-refusal text channel (may accompany finish_reason content_filter). */
+  refusal?: string | null;
   tool_calls?: OpenAIToolCallDelta[];
-  /** o-series reasoning content (opaque, vendor-only) — dropped from core. */
+  /** Model thinking, streamed by OpenAI-COMPATIBLE endpoints. OpenRouter uses
+   * `reasoning`; DeepSeek R1 / Kimi / 智谱 GLM / Qwen / 豆包 use `reasoning_content`.
+   * OpenAI proper never emits reasoning in Chat Completions (server-side only). */
   reasoning?: string | null;
   reasoning_content?: string | null;
 }
@@ -26,6 +30,9 @@ export interface OpenAIChoice {
   message?: {
     role?: string;
     content?: string | null;
+    refusal?: string | null;
+    reasoning?: string | null;
+    reasoning_content?: string | null;
     tool_calls?: Array<{ id?: string; type?: string; function?: OpenAIFunctionCall }>;
   };
   finish_reason?: string | null;
@@ -34,6 +41,7 @@ export interface OpenAIUsage {
   prompt_tokens?: number | null;
   completion_tokens?: number | null;
   total_tokens?: number | null;
+  prompt_tokens_details?: { cached_tokens?: number | null } | null;
   completion_tokens_details?: { reasoning_tokens?: number | null } | null;
 }
 export interface ChatCompletionChunk {
@@ -88,6 +96,9 @@ export interface ChatCompletion {
     message?: {
       role?: string;
       content?: string | null;
+      refusal?: string | null;
+      reasoning?: string | null;
+      reasoning_content?: string | null;
       tool_calls?: Array<{ id?: string; type?: string; function?: OpenAIFunctionCall }>;
     };
     finish_reason?: string | null;

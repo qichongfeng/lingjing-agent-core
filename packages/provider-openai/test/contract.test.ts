@@ -370,6 +370,146 @@ describe("no vendor fields leak into core output", () => {
   });
 });
 
+describe("reasoning / thinking support", () => {
+  test("mapStream: reasoning_content deltas → thinking_delta, thinking_end before content", async () => {
+    const chunks = [
+      ck({ id: "r1", model: "deepseek-reasoner", choices: [{ delta: { role: "assistant" } }] }),
+      ck({ id: "r1", model: "deepseek-reasoner", choices: [{ delta: { reasoning_content: "think " } }] }),
+      ck({ id: "r1", model: "deepseek-reasoner", choices: [{ delta: { reasoning_content: "harder" } }] }),
+      ck({ id: "r1", model: "deepseek-reasoner", choices: [{ delta: { content: "Answer" } }] }),
+      ck({ id: "r1", model: "deepseek-reasoner", choices: [{ delta: {}, finish_reason: "stop" }] }),
+      ck({ id: "r1", model: "deepseek-reasoner", choices: [], usage: { prompt_tokens: 4, completion_tokens: 6, completion_tokens_details: { reasoning_tokens: 5 } } }),
+    ];
+    const out = await collect(mapStream((async function* () { for (const c of chunks) yield c; })()));
+    expect(out.map((c) => c.type)).toEqual([
+      "message_start",
+      "thinking_delta",
+      "thinking_delta",
+      "thinking_end",
+      "text_delta",
+      "message_delta",
+      "message_end",
+    ]);
+    const thinking = out.filter((c) => c.type === "thinking_delta");
+    expect(thinking.map((c) => (c as { text: string }).text).join("")).toBe("think harder");
+    const end = out.find((c) => c.type === "message_end");
+    expect(end).toMatchObject({ usage: { reasoningTokens: 5 } });
+  });
+
+  test("mapStream: `reasoning` field (OpenRouter) mapped; thinking_end at finish when nothing follows", async () => {
+    const chunks = [
+      ck({ id: "r2", model: "m", choices: [{ delta: { reasoning: "only thinking, no answer" } }] }),
+      ck({ id: "r2", model: "m", choices: [{ delta: {}, finish_reason: "stop" }] }),
+      ck({ id: "r2", model: "m", choices: [], usage: { prompt_tokens: 1, completion_tokens: 1 } }),
+    ];
+    const out = await collect(mapStream((async function* () { for (const c of chunks) yield c; })()));
+    expect(out.map((c) => c.type)).toEqual([
+      "message_start",
+      "thinking_delta",
+      "thinking_end",
+      "message_delta",
+      "message_end",
+    ]);
+  });
+
+  test("mapStream: refusal delta surfaces as text_delta", async () => {
+    const chunks = [
+      ck({ id: "rf", model: "m", choices: [{ delta: { refusal: "I can't help with that." } }] }),
+      ck({ id: "rf", model: "m", choices: [{ delta: {}, finish_reason: "content_filter" }] }),
+    ];
+    const out = await collect(mapStream((async function* () { for (const c of chunks) yield c; })()));
+    const text = out.find((c) => c.type === "text_delta");
+    expect(text).toMatchObject({ text: "I can't help with that." });
+    expect(out.find((c) => c.type === "message_delta")).toMatchObject({ stopReason: "refusal" });
+  });
+
+  test("mapStream: reasoning then tool_calls closes thinking first", async () => {
+    const chunks = [
+      ck({ id: "rt", model: "m", choices: [{ delta: { reasoning_content: "plan" } }] }),
+      ck({ id: "rt", model: "m", choices: [{ delta: { tool_calls: [{ index: 0, id: "c1", function: { name: "echo", arguments: "{}" } }] } }] }),
+      ck({ id: "rt", model: "m", choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+    ];
+    const out = await collect(mapStream((async function* () { for (const c of chunks) yield c; })()));
+    expect(out.map((c) => c.type)).toEqual([
+      "message_start",
+      "thinking_delta",
+      "thinking_end",
+      "tool_call_start",
+      "tool_call_delta",
+      "tool_call_end",
+      "message_delta",
+      "message_end", // close-fallback (no usage chunk)
+    ]);
+  });
+
+  test("mapRequest: thinking disabled on o-series → reasoning_effort none; adaptive sends nothing", () => {
+    const off = mapRequest(baseReq({ model: "gpt-5", config: { maxTokens: 10, thinking: { type: "disabled" } } })) as unknown as Record<string, unknown>;
+    expect(off["reasoning_effort"]).toBe("none");
+    const adaptive = mapRequest(baseReq({ model: "gpt-5", config: { maxTokens: 10, thinking: { type: "adaptive" } } })) as unknown as Record<string, unknown>;
+    expect(adaptive["reasoning_effort"]).toBeUndefined();
+  });
+
+  test("mapRequest: effort xhigh/max clamps to high on o-series", () => {
+    for (const effort of ["xhigh", "max"] as const) {
+      const params = mapRequest(baseReq({ model: "o3", config: { maxTokens: 10, effort } })) as unknown as Record<string, unknown>;
+      expect(params["reasoning_effort"]).toBe("high");
+    }
+  });
+
+  test("mapRequest: providerOptions.body merged as vendor escape hatch (headers key skipped)", () => {
+    const params = mapRequest(
+      baseReq({
+        config: {
+          maxTokens: 10,
+          providerOptions: { body: { thinking: { type: "enabled" }, enable_thinking: true, verbosity: "low", headers: { "X-Ignored": "1" } } },
+        },
+      }),
+    ) as unknown as Record<string, unknown>;
+    expect(params["thinking"]).toEqual({ type: "enabled" });
+    expect(params["enable_thinking"]).toBe(true);
+    expect(params["verbosity"]).toBe("low");
+    expect(params["headers"]).toBeUndefined();
+  });
+
+  test("complete(): reasoning_content + refusal mapped into message blocks", async () => {
+    const fetchMock = async () =>
+      new Response(
+        JSON.stringify({
+          id: "chat-r",
+          model: "deepseek-reasoner",
+          choices: [
+            {
+              message: { role: "assistant", content: "answer", reasoning_content: "because of X", refusal: "also refused bit" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 5, completion_tokens: 2, prompt_tokens_details: { cached_tokens: 3 } },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const p = new OpenAIProvider({ apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    const res = await p.complete(baseReq());
+    expect(res.message.content).toEqual([
+      { type: "thinking", text: "because of X" },
+      { type: "text", text: "answer\nalso refused bit" },
+    ]);
+    expect(res.usage).toEqual({ inputTokens: 5, outputTokens: 2, cacheReadTokens: 3 });
+  });
+
+  test("mapUsage: prompt_tokens_details.cached_tokens → cacheReadTokens", () => {
+    expect(mapUsage({ prompt_tokens: 10, completion_tokens: 1, prompt_tokens_details: { cached_tokens: 7 } })).toEqual({
+      inputTokens: 10,
+      outputTokens: 1,
+      cacheReadTokens: 7,
+    });
+  });
+
+  test("capabilities declare thinking", () => {
+    const p = new OpenAIProvider({ apiKey: "test" });
+    expect(p.capabilities.thinking).toBe(true);
+  });
+});
+
 describe("parseSSE", () => {
   test("parses data: lines and stops at [DONE]", async () => {
     const body = [

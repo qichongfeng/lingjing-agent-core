@@ -66,7 +66,14 @@ new OpenAIProvider({ apiKey, baseURL: "https://gateway.example/v1", fetch: myFet
 | `null` / unknown    | `end_turn`            |
 | index-keyed `tool_calls[].function.arguments` | id-keyed `tool_call_delta.inputJsonDelta` (concatenated per index) |
 | multi-`tool_result` user message               | multiple `{role:"tool", tool_call_id}` messages |
-| o-series `reasoning_effort`                    | `config.effort` (omitted for non-o-series) |
+| o-series `reasoning_effort`                    | `config.effort` (omitted for non-o-series; `xhigh`/`max` clamp to `high`, `thinking:{type:"disabled"}` → `"none"`) |
+| `delta.reasoning_content` / `delta.reasoning`  | `thinking_delta` chunks + one `thinking_end` (DeepSeek R1 / Kimi / GLM / Qwen / 豆包 use `reasoning_content`; OpenRouter uses `reasoning`) |
+| `delta.refusal` / `message.refusal`            | surfaced as text (with `content_filter` → stopReason `refusal`) |
+| `prompt_tokens_details.cached_tokens`          | `usage.cacheReadTokens` |
+| `completion_tokens_details.reasoning_tokens`   | `usage.reasoningTokens` |
+| `providerOptions.body` (host-supplied, merged last) | any endpoint-specific request param — GLM `thinking`, Qwen `enable_thinking`, gpt-5 `verbosity`, `response_format`, … |
+
+**Thinking replay:** reasoning blocks map to core `thinking` blocks for display/persistence, but are DROPPED on the way back into requests — compatible endpoints treat `reasoning_content` as display-only (DeepSeek returns 400 if it is replayed).
 
 **`stop` → `stop_sequence`:** OpenAI's `"stop"` fires for both natural completion
 and an explicit stop-sequence hit (the wire format does not distinguish them).

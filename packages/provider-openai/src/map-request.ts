@@ -20,8 +20,9 @@ import type {
  * Key structural differences from Anthropic:
  *  - `system` becomes a leading `{role:"system"}` message (OpenAI allows system
  *    role in `messages`).
- *  - `ThinkingContent` is dropped (OpenAI has no analogous input block; the
- *    model's reasoning is opaque/ephemeral).
+ *  - `ThinkingContent` is dropped on the way IN. OpenAI-compatible reasoning
+ *    (`reasoning_content`/`reasoning`) is display-only — DeepSeek 400s if it is
+ *    replayed in `messages`, and no compatible endpoint accepts it as input.
  *  - One core `assistant` message with multiple `tool_call` blocks → a single
  *    OpenAI assistant message carrying a `tool_calls[]` array.
  *  - One core `user` message holding multiple `tool_result` blocks → multiple
@@ -80,9 +81,29 @@ export function mapRequest(req: ProviderRequest): OpenAIChatParams {
   if (config.topP !== undefined) out.top_p = config.topP;
   if (config.stopSequences && config.stopSequences.length > 0) out.stop = config.stopSequences;
 
-  // o-series reasoning effort.
+  // o-series reasoning effort. OpenAI accepts low|medium|high|none only —
+  // clamp core's extended scale (xhigh/max come from other providers).
   if (config.effort && isOpenAISeries(model)) {
-    out.reasoning_effort = config.effort;
+    out.reasoning_effort = config.effort === "xhigh" || config.effort === "max" ? "high" : config.effort;
+  }
+  // Explicit thinking disable on o-series/gpt-5 → reasoning_effort "none"
+  // (gpt-5.1+). "adaptive" is the endpoint default — send nothing.
+  if (isOpenAISeries(model) && config.thinking?.type === "disabled") {
+    out.reasoning_effort = "none";
+  }
+
+  // Vendor escape hatch, merged LAST (per-field override): hosts targeting
+  // OpenAI-compatible endpoints can pass any endpoint-specific param without
+  // waiting for adapter support — GLM `thinking:{type}`, Qwen `enable_thinking`,
+  // gpt-5 `verbosity`, `response_format` structured outputs, …
+  // (`providerOptions.headers` is reserved for per-request headers; `model`/
+  // `messages` overrides are unsupported and discouraged.)
+  const extra = (config.providerOptions as { body?: Record<string, unknown> } | undefined)?.body;
+  if (extra) {
+    for (const [k, v] of Object.entries(extra)) {
+      if (k === "headers") continue;
+      (out as unknown as Record<string, unknown>)[k] = v;
+    }
   }
 
   return out;

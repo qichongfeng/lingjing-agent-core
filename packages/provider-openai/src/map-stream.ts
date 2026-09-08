@@ -14,6 +14,17 @@ import type { ChatCompletionChunk } from "./types.js";
  * keyed by `toolCallId`, so we use the start-delta id (synthesizing a stable id
  * when OpenAI omits it) as the key.
  *
+ * REASONING: OpenAI-compatible endpoints stream model thinking as
+ * `delta.reasoning_content` (DeepSeek R1, Kimi, 智谱 GLM, Qwen, 豆包) or
+ * `delta.reasoning` (OpenRouter). OpenAI proper never emits reasoning in Chat
+ * Completions (o-series reasoning is server-side only), but this adapter
+ * speaks the whole compatible ecosystem, so both fields map to core
+ * `thinking_delta` chunks (and one `thinking_end` when the reasoning stream
+ * transitions to answer content — or at finish, if it never does). No
+ * signature: the compatible ecosystem has no replayable-thinking mechanism
+ * (DeepSeek 400s if `reasoning_content` is replayed), so map-request DROPS
+ * thinking blocks on the way back in.
+ *
  * OpenAI emits usage ONLY when `stream_options.include_usage` is set, and it
  * arrives in a FINAL chunk whose `choices` array is empty. `finish_reason`
  * arrives in an earlier chunk. So we emit `message_delta{stopReason}` at
@@ -31,6 +42,7 @@ export async function* mapStream(chunks: AsyncIterable<ChatCompletionChunk>): As
   let model = "";
   let pendingStop: import("@lingjing-agent/core").StopReason | undefined;
   const tools = new Map<number, AccTool>();
+  let thinkingOpen = false;
 
   try {
     for await (const chunk of chunks) {
@@ -48,6 +60,10 @@ export async function* mapStream(chunks: AsyncIterable<ChatCompletionChunk>): As
       // Usage-only final chunk: empty choices + usage present → emit message_end.
       if (choices.length === 0 && chunk.usage) {
         const usage = mapUsage(chunk.usage);
+        if (thinkingOpen) {
+          thinkingOpen = false;
+          yield { type: "thinking_end" };
+        }
         yield {
           type: "message_end",
           stopReason: pendingStop ?? "end_turn",
@@ -61,15 +77,35 @@ export async function* mapStream(chunks: AsyncIterable<ChatCompletionChunk>): As
       for (const choice of choices) {
         const delta = choice.delta;
 
+        const reasoning = delta?.reasoning_content ?? delta?.reasoning;
+        if (typeof reasoning === "string" && reasoning.length > 0) {
+          thinkingOpen = true;
+          yield { type: "thinking_delta", text: reasoning };
+        }
+
         if (delta?.content) {
+          if (thinkingOpen) {
+            thinkingOpen = false;
+            yield { type: "thinking_end" };
+          }
           yield { type: "text_delta", text: delta.content };
         }
 
-        // o-series reasoning content is vendor-proprietary (no core replay path
-        // for OpenAI) — discard it rather than fabricate a thinking_delta.
-        // (delta.reasoning / delta.reasoning_content intentionally ignored.)
+        // OpenAI refusal channel: surface as text so hosts/models see it
+        // (finish_reason content_filter already maps to stopReason refusal).
+        if (typeof delta?.refusal === "string" && delta.refusal.length > 0) {
+          if (thinkingOpen) {
+            thinkingOpen = false;
+            yield { type: "thinking_end" };
+          }
+          yield { type: "text_delta", text: delta.refusal };
+        }
 
         if (delta?.tool_calls) {
+          if (thinkingOpen) {
+            thinkingOpen = false;
+            yield { type: "thinking_end" };
+          }
           for (const tc of delta.tool_calls) {
             const existing = tools.get(tc.index);
             // Start of a new tool call: an id and/or function.name arrives.
@@ -91,6 +127,10 @@ export async function* mapStream(chunks: AsyncIterable<ChatCompletionChunk>): As
 
         if (choice.finish_reason) {
           const stopReason = mapStop(choice.finish_reason);
+          if (thinkingOpen) {
+            thinkingOpen = false;
+            yield { type: "thinking_end" };
+          }
           // Finalize any tool-call blocks first, then surface the stop reason —
           // matches the anthropic ordering (content_block_stop → message_delta).
           for (const acc of tools.values()) {
