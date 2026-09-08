@@ -517,9 +517,9 @@ lingjing-agent-core/                      (pnpm workspace 根)
 
 ### 6.3 Node / 桌面（Electron / Tauri main）
 
-> ⚠️ `tools-node` 包已从仓库移除。以下为 Node/桌面 agent 的工具设计模式（自行用 `node:child_process` / `node:fs` 实现 safeShell / fsTools，硬化要点见 §7）。
+> 内置工具已回归为可选包：`@lingjing-agent/tools-node`（`createFsTools` / `createSafeShell` / `createGlobTool` / `createGrepTool`，Node/Electron/Tauri-main 专属）与 `@lingjing-agent/tools-fetch`（`createWebFetchTool`，零 `node:` import、走 core `HttpTransport`，跨端可用）。均按 §7 硬化，可选注入 —— 不 import 即不进 bundle。
 
-- 注入 `safeShell({ allowlist: ["git","ls","cat","rg"], timeoutMs })` + `fsTools({ root: process.cwd() })`（路径 confinement）。`permissionGate` 弹 Electron 对话框 / 推送到 Tauri UI 并 await。
+- 注入 `createSafeShell({ allowlist: ["git","ls","cat","rg"], timeoutMs })` + `createFsTools({ root: process.cwd() })`（路径 confinement）。`permissionGate` 弹 Electron 对话框 / 推送到 Tauri UI 并 await。
 
 ### 6.4 Edge 运行时兼容性
 - `core` + `provider-openai` Edge 安全（仅 `fetch`/`AbortController`/`crypto.randomUUID`/`TextEncoder`）。Node 专属能力（fs/shell）不在仓库内；若自建 Node 工具，在 Edge bundle 里 import 它必须让构建失败（宿主在 Edge 路由里不 import）。

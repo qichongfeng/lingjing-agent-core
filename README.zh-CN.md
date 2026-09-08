@@ -67,6 +67,32 @@ const provider = new OpenAIProvider({
 });
 ```
 
+## 内置工具(可选注入)
+
+core 本身不内置任何工具——能力注入是设计原则。两个可选包提供硬化过的工具,按需 import、只把要用的传进 `tools`:
+
+```bash
+npm install @lingjing-agent/tools-node   # 仅 Node/Electron/Tauri 主进程
+npm install @lingjing-agent/tools-fetch  # 跨端(浏览器/Edge/小程序均可用)
+```
+
+```ts
+import { createFsTools, createSafeShell, createGrepTool } from "@lingjing-agent/tools-node";
+import { createWebFetchTool } from "@lingjing-agent/tools-fetch";
+
+const agent = createAgent({
+  /* provider、model 等 */
+  tools: [
+    ...createFsTools({ root: process.cwd() }),                  // 路径 confinement 的读/写/列/删
+    createSafeShell({ allowlist: ["git", "ls", "cat", "rg"] }), // 拒元字符 + spawn(shell:false) + 超时
+    createGrepTool({ root: process.cwd() }),                    // 内容搜索(另有 createGlobTool)
+    createWebFetchTool(),                                       // http(s) GET → 可读文本
+  ],
+});
+```
+
+默认即硬化:模型给的路径逃不出 `root`(`..`/symlink 拒绝)、写/删/shell 出厂 `destructive`(过权限门)、每个工具带 tag(`fs:read`、`shell`、`http`……)供 `allowedToolTags` 白名单匹配。
+
 ## 微信小程序
 
 小程序没有 `fetch` / `AbortController` / `ReadableStream` —— 注入自定义 `HttpTransport`（桥接 `wx.request`），同一份代码零 polyfill 跑起来：
@@ -92,4 +118,5 @@ const handle = chat.send(input, { signal: someExternalSignal }); // 或调用 ha
 ## 更多
 
 - 完整设计与架构：[`DESIGN.md`](./DESIGN.md)
-- 可运行示例（RAG 注入、ask-user 工具、小程序）：[`examples/`](./examples/)
+- 内置工具包：[`@lingjing-agent/tools-node`](./packages/tools-node/) · [`@lingjing-agent/tools-fetch`](./packages/tools-fetch/)
+- 可运行示例（RAG 注入、ask-user 工具、node 工具、小程序）：[`examples/`](./examples/)

@@ -7,10 +7,13 @@
     "demo:rag": "node --experimental-strip-types rag-inject-demo.ts",
     "demo:wx-transport": "node --experimental-strip-types miniprogram-transport.selftest.ts",
     "demo:ask-user": "node --experimental-strip-types ask-user-tool.ts",
-    "demo:media-store": "node --experimental-strip-types media-store.ts"
+    "demo:media-store": "node --experimental-strip-types media-store.ts",
+    "demo:node-tools": "node --experimental-strip-types node-tools-demo.ts"
   },
   "dependencies": {
-    "@lingjing-agent/core": "workspace:*"
+    "@lingjing-agent/core": "workspace:*",
+    "@lingjing-agent/tools-node": "workspace:*",
+    "@lingjing-agent/tools-fetch": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"

@@ -1,0 +1,44 @@
+{
+  "name": "@lingjing-agent/tools-node",
+  "version": "0.1.0-beta.2",
+  "description": "Optional built-in tools for @lingjing-agent/core on Node: fs (path-confined), hardened shell, glob/grep. Import only in Node/Electron/Tauri-main hosts.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qichongfeng/lingjing-agent-core.git",
+    "directory": "packages/tools-node"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@lingjing-agent/core": ">=0.1.0-beta.1"
+  },
+  "dependencies": {
+    "@lingjing-agent/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}

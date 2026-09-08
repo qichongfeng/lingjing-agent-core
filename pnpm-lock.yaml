@@ -26,6 +26,12 @@ importers:
       '@lingjing-agent/core':
         specifier: workspace:*
         version: link:../packages/core
+      '@lingjing-agent/tools-fetch':
+        specifier: workspace:*
+        version: link:../packages/tools-fetch
+      '@lingjing-agent/tools-node':
+        specifier: workspace:*
+        version: link:../packages/tools-node
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -48,6 +54,22 @@ importers:
       '@lingjing-agent/core':
         specifier: workspace:*
         version: link:../core
+
+  packages/tools-fetch:
+    dependencies:
+      '@lingjing-agent/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/tools-node:
+    dependencies:
+      '@lingjing-agent/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
 
 packages:
 

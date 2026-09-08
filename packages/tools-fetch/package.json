@@ -1,0 +1,41 @@
+{
+  "name": "@lingjing-agent/tools-fetch",
+  "version": "0.1.0-beta.2",
+  "description": "web_fetch tool for @lingjing-agent/core — cross-runtime (Node/browser/Edge/mini-program) via the core HttpTransport abstraction. Zero node: imports.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qichongfeng/lingjing-agent-core.git",
+    "directory": "packages/tools-fetch"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@lingjing-agent/core": ">=0.1.0-beta.1"
+  },
+  "dependencies": {
+    "@lingjing-agent/core": "workspace:*"
+  }
+}

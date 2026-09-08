@@ -67,6 +67,32 @@ const provider = new OpenAIProvider({
 });
 ```
 
+## Built-in tools (optional)
+
+The core ships none — capability injection is the design. Two optional packages provide hardened, opt-in tools; import only what you pass to `tools`:
+
+```bash
+npm install @lingjing-agent/tools-node   # Node/Electron/Tauri-main only
+npm install @lingjing-agent/tools-fetch  # cross-runtime (browser/Edge/mini-program OK)
+```
+
+```ts
+import { createFsTools, createSafeShell, createGrepTool } from "@lingjing-agent/tools-node";
+import { createWebFetchTool } from "@lingjing-agent/tools-fetch";
+
+const agent = createAgent({
+  /* provider, model, … */
+  tools: [
+    ...createFsTools({ root: process.cwd() }),                  // path-confined read/write/list/delete
+    createSafeShell({ allowlist: ["git", "ls", "cat", "rg"] }), // no metachars, spawn(shell:false), timeout
+    createGrepTool({ root: process.cwd() }),                    // content search (+ createGlobTool)
+    createWebFetchTool(),                                       // http(s) GET → readable text
+  ],
+});
+```
+
+Hardened by default: model paths can't escape `root` (`..`/symlink refusal), write/delete/shell are `destructive` (permission-gated), every tool carries tags (`fs:read`, `shell`, `http`, …) for `allowedToolTags` allowlisting.
+
 ## WeChat mini-program
 
 No `fetch` / `AbortController` / `ReadableStream` there — inject a custom `HttpTransport` (bridge `wx.request`) and the same code runs with zero polyfills:
@@ -92,4 +118,5 @@ const handle = chat.send(input, { signal: someExternalSignal }); // or call hand
 ## More
 
 - Design & architecture: [`DESIGN.md`](./DESIGN.md)
-- Runnable examples (RAG injection, ask-user tool, mini-program): [`examples/`](./examples/)
+- Built-in tools: [`@lingjing-agent/tools-node`](./packages/tools-node/) · [`@lingjing-agent/tools-fetch`](./packages/tools-fetch/)
+- Runnable examples (RAG injection, ask-user tool, node tools, mini-program): [`examples/`](./examples/)
