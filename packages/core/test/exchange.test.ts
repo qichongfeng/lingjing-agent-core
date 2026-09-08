@@ -341,5 +341,7 @@ describe("groupExchanges — end to end with the real loop", () => {
     const pair = pairAt(ex.steps, 1);
     expect(pair.call.name).toBe("echo");
     expect(pair.result?.content).toBe(JSON.stringify({ hello: "world" }));
+    // Duration persists on the block → the reloaded tool card matches the live one.
+    expect(typeof pair.result?.ms).toBe("number");
   });
 });

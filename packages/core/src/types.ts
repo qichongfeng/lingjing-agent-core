@@ -40,6 +40,11 @@ export interface ToolResult {
   toolCallId: string; // matches ToolCall.id
   content: string | Content[];
   isError?: boolean; // tool execution failed (still fed back to model)
+  /** Execution duration in ms, set by the loop when it runs the tool.
+   *  Informational only — never forwarded to providers. Persisting it keeps
+   *  the tool card reconstructible from history exactly as the live
+   *  tool_result event rendered it (duration included, after reload). */
+  ms?: number;
 }
 
 export type Content =

@@ -562,16 +562,18 @@ function finish(
   conversationId: string,
   turn: number,
 ): ToolResult {
+  const ms = now() - startMs;
   const result: ToolResult = {
     type: "tool_result",
     toolCallId,
     content,
+    ms, // persisted alongside the block → survives reload
     ...(isError ? { isError } : {}),
   };
   const contentArr: Content[] = typeof content === "string" ? [{ type: "text", text: content }] : content;
   emit({
     type: "tool_result", conversationId, turn, ts: now(),
-    toolCallId, content: contentArr, isError, ms: now() - startMs,
+    toolCallId, content: contentArr, isError, ms,
   });
   return result;
 }
