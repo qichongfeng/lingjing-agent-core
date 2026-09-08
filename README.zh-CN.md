@@ -48,7 +48,13 @@ const finalMessage = await done; // Promise<Message>
 
 ## 多轮对话
 
-对话状态持久化在 `MemoryStore`（默认进程内 `InMemoryStore`;需要跨进程持久化可自行接入 Redis/Postgres/`wx` 存储）。
+对话状态持久化在 `MemoryStore`（默认进程内 `InMemoryStore`;需要跨进程持久化可自行接入 Redis/Postgres/`wx` 存储）。浏览器内置 IndexedDB 实现 —— 刷新页面对话不丢、多标签页共享:
+
+```ts
+import { IDBStore } from "@lingjing-agent/core";
+
+const agent = createAgent({ /* … */ memory: new IDBStore() });
+```
 
 ```ts
 const chat = agent.conversation("c1");

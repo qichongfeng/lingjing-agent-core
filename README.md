@@ -48,7 +48,13 @@ Every event is JSON-serializable — pipe it straight through IPC / SSE / WebSoc
 
 ## Multi-turn conversations
 
-Conversations persist in a `MemoryStore` (default: in-process `InMemoryStore`; bring your own for Redis/Postgres/`wx` storage).
+Conversations persist in a `MemoryStore` (default: in-process `InMemoryStore`; bring your own for Redis/Postgres/`wx` storage). Browsers get a built-in IndexedDB store — conversations survive reloads and share across tabs:
+
+```ts
+import { IDBStore } from "@lingjing-agent/core";
+
+const agent = createAgent({ /* … */ memory: new IDBStore() });
+```
 
 ```ts
 const chat = agent.conversation("c1");

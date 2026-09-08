@@ -39,6 +39,8 @@ export type { HookContext, Hooks, BeforeToolCallCall, AfterToolCallCall } from "
 
 export type { MemorySnippet, MemoryStore, RagInjectOptions } from "./memory.js";
 export { InMemoryStore, ragInjectHook } from "./memory.js";
+export { IDBStore } from "./idb-store.js";
+export type { IDBStoreOptions } from "./idb-store.js";
 
 export type { ContextFitInput, ContextFitResult, ContextManager } from "./context.js";
 export { TrimContextManager, CompactContextManager } from "./context.js";
