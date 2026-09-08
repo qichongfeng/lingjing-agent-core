@@ -72,6 +72,15 @@ export function userMessage(
   };
 }
 
+/**
+ * Return a copy of `m` tagged with a run id (`metadata.runId`). core stamps
+ * every message it appends during one `agent.stream()` run; `groupExchanges`
+ * groups by it. Copy-on-write so caller-owned message objects are never mutated.
+ */
+export function withRunId(m: Message, runId: string): Message {
+  return { ...m, metadata: { ...m.metadata, runId } };
+}
+
 export function randomId(): string {
   // crypto.randomUUID is available on Node 20+, modern browsers, and Edge.
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {

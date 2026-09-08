@@ -12,6 +12,9 @@ export type {
 } from "./types.js";
 export { userMessage, randomId, extractText } from "./types.js";
 
+export type { Exchange, ExchangeStep, ToolPairStep } from "./exchange.js";
+export { groupExchanges } from "./exchange.js";
+
 export type {
   StopReason,
   TokenUsage,

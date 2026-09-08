@@ -12,7 +12,7 @@ import type {
 } from "./provider.js";
 import type { Tool } from "./tool.js";
 import type { Message, TextContent } from "./types.js";
-import { userMessage } from "./types.js";
+import { randomId, userMessage, withRunId } from "./types.js";
 import { AbortError, anySignal } from "./abort.js";
 import type { AgentEvent } from "./events.js";
 
@@ -125,6 +125,9 @@ export function createAgent(config: AgentConfig): Agent {
     }
 
     const done: Promise<Message> = (async () => {
+      // Run id: groups everything this stream appends (input, assistant turns,
+      // tool-result carriers, hook injects) into one exchange for groupExchanges().
+      const runId = randomId();
       // Load history from the memory store (default InMemoryStore = in-process).
       // Copy so runLoop's in-place mutations don't leak into the store until append().
       const history: Message[] = [...(await memory.load(conversationId))];
@@ -133,9 +136,10 @@ export function createAgent(config: AgentConfig): Agent {
       // shortening history in place (a baseline array index would go stale after compaction).
       const loadedIds = new Set(history.map((m) => m.id));
       if (typeof input === "string") {
-        history.push(userMessage(input, now));
+        history.push(withRunId(userMessage(input, now), runId));
       } else {
-        history.push(...input);
+        // Copy-on-write stamp: caller-owned Message objects are never mutated.
+        history.push(...input.map((m) => withRunId(m, runId)));
       }
 
       try {
@@ -144,6 +148,7 @@ export function createAgent(config: AgentConfig): Agent {
           model: config.model,
           tools: [...tools],
           messages: history,
+          runId,
           config: buildProviderConfig(),
           maxTurns,
           toolTimeoutMs,

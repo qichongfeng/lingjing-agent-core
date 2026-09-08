@@ -19,7 +19,7 @@ import type {
 import { validateJsonSchema } from "./schema.js";
 import type { Tool, ToolCallContext } from "./tool.js";
 import type { Content, Message, TextContent, ToolCall, ToolResult } from "./types.js";
-import { extractText, randomId, userMessage } from "./types.js";
+import { extractText, randomId, userMessage, withRunId } from "./types.js";
 import { AbortError, anySignal, detectRuntime, sleep, TimeoutError } from "./abort.js";
 
 export interface LoopOptions {
@@ -28,6 +28,9 @@ export interface LoopOptions {
   system?: string | TextContent[];
   tools: Tool[];
   messages: Message[]; // mutated in place (append assistant + tool_result turns)
+  /** Stamped onto every message this run appends (metadata.runId); groups the
+   *  run into one exchange for groupExchanges(). */
+  runId: string;
   config: ProviderConfig;
   maxTurns: number;
   toolTimeoutMs: number;
@@ -50,7 +53,7 @@ export async function runLoop(opts: LoopOptions): Promise<Message> {
   const {
     provider, model, system, tools, messages, config, maxTurns, toolTimeoutMs,
     tokenBudget, maxContinuations, maxStalledTurns,
-    permissionGate, hooks, context, retry, signal, conversationId, now, emit,
+    permissionGate, hooks, context, retry, signal, conversationId, runId, now, emit,
   } = opts;
 
   let turn = 0;
@@ -109,9 +112,9 @@ export async function runLoop(opts: LoopOptions): Promise<Message> {
           // Inject context as new message(s) right before the request is built.
           // The hook receives a snapshot and returns `inject` rather than mutating.
           if (typeof r.inject === "string") {
-            messages.push(userMessage(r.inject, now));
+            messages.push(withRunId(userMessage(r.inject, now), runId));
           } else {
-            messages.push(...r.inject);
+            messages.push(...r.inject.map((m) => withRunId(m, runId)));
           }
         }
       }
@@ -132,7 +135,7 @@ export async function runLoop(opts: LoopOptions): Promise<Message> {
       );
       // context_window_exceeded is a compaction signal, not a real reply — don't
       // push the (empty) assistant into history, else memory.append would persist it.
-      if (stopReason !== "context_window_exceeded") messages.push(message);
+      if (stopReason !== "context_window_exceeded") messages.push(withRunId(message, runId));
       lastAssistant = message;
       totalUsage = addUsage(totalUsage, usage);
       consecutiveMaxTokens = stopReason === "max_tokens" ? consecutiveMaxTokens + 1 : 0;
@@ -412,11 +415,15 @@ async function executeTools(
 
   const results: ToolResult[] = settled.map((s) => (s.status === "fulfilled" ? s.value.result : toolResult("?", "unreachable: executeOne should not reject", true)));
   // Push ONE user message with all tool_results (never split across messages).
+  // sourceMessageId back-points to the assistant message whose calls these
+  // results answer (explicit pairing; groupExchanges pairs by toolCallId within
+  // the run, hosts/debuggers can use the pointer directly).
   opts.messages.push({
     id: randomId(),
     role: "user",
     content: results,
     createdAt: opts.now(),
+    metadata: { runId: opts.runId, sourceMessageId: assistant.id },
   });
 }
 
