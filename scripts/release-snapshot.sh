@@ -15,8 +15,8 @@ NEXT=$(node -e "
 " "$CURRENT")
 echo "==> 版本:$CURRENT → $NEXT"
 
-# 2. 两个包同步写入新版本
-for p in core provider-openai; do
+# 2. 五个包同步写入新版本
+for p in core provider-openai provider-anthropic tools-node tools-fetch; do
 	node -e "
 		const f = './packages/$p/package.json';
 		const j = require(f);
@@ -33,7 +33,7 @@ pnpm -r test > /dev/null 2>&1 || { echo '测试失败,已中止发版(版本号�
 
 # 4. 发布
 echo '==> 发布'
-pnpm --filter @lingjing-agent/core --filter @lingjing-agent/provider-openai publish --no-git-checks
+pnpm --filter @lingjing-agent/core --filter @lingjing-agent/provider-openai --filter @lingjing-agent/provider-anthropic --filter @lingjing-agent/tools-node --filter @lingjing-agent/tools-fetch publish --no-git-checks
 
 # 5. 提交版本变更
 git add packages pnpm-lock.yaml
