@@ -1,6 +1,6 @@
 {
   "name": "@lingjing-agent/tools-fetch",
-  "version": "0.1.0-beta.2",
+  "version": "0.1.0-beta.3",
   "description": "web_fetch tool for @lingjing-agent/core — cross-runtime (Node/browser/Edge/mini-program) via the core HttpTransport abstraction. Zero node: imports.",
   "type": "module",
   "main": "./dist/index.cjs",
