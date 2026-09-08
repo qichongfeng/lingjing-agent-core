@@ -20,6 +20,11 @@ export interface ThinkingContent {
   text: string;
   /** Opaque signature some providers require for multi-turn replay. */
   signature?: string;
+  /** Wall-clock thinking duration in ms — measured by the loop from the first
+   *  thinking_delta to thinking_end. Informational only, never forwarded to
+   *  providers (same contract as ToolResult.ms): persisted so a view rebuilt
+   *  from history matches what the live stream showed. */
+  ms?: number;
 }
 
 /**

@@ -311,6 +311,8 @@ async function consumeStream(
   let textBuf = "";
   let thinkingBuf = "";
   let thinkingSignature: string | undefined;
+  let thinkingStart: number | undefined;
+  let thinkingMs: number | undefined;
   const toolCalls: ToolCall[] = [];
   let stopReason: StopReason = "end_turn";
   let usage: TokenUsage = emptyUsage();
@@ -331,11 +333,13 @@ async function consumeStream(
         emit({ type: "text_delta", conversationId, turn, ts: now(), text: chunk.text });
         break;
       case "thinking_delta":
+        if (thinkingStart === undefined) thinkingStart = now();
         thinkingBuf += chunk.text;
         emit({ type: "thinking_delta", conversationId, turn, ts: now(), text: chunk.text });
         break;
       case "thinking_end":
         if (chunk.signature) thinkingSignature = chunk.signature;
+        if (thinkingStart !== undefined) thinkingMs = now() - thinkingStart;
         break;
       case "tool_call_start":
         toolCalls.push({ type: "tool_call", id: chunk.toolCallId, name: chunk.name, inputJson: "" });
@@ -377,6 +381,7 @@ async function consumeStream(
       type: "thinking",
       text: thinkingBuf,
       ...(thinkingSignature ? { signature: thinkingSignature } : {}),
+      ...(thinkingMs !== undefined ? { ms: thinkingMs } : {}),
     });
   if (textBuf) content.push({ type: "text", text: textBuf });
   for (const tc of toolCalls) content.push(tc);

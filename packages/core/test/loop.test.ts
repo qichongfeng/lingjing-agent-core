@@ -231,4 +231,24 @@ describe("agentic loop", () => {
     const r2 = await collect(agent.stream("second", { conversationId: "c" }));
     expect(r2.message && extractText(r2.message)).toBe("turn-2");
   });
+
+  test("thinking duration is stamped on the persisted ThinkingContent block", async () => {
+    const provider = scriptedProvider([
+      [
+        { type: "message_start", messageId: "msg_th", model: "fake" },
+        { type: "thinking_delta", text: "hmm " },
+        { type: "thinking_delta", text: "hmm" },
+        { type: "thinking_end", signature: "sig_1" },
+        { type: "text_delta", text: "answer" },
+        { type: "message_end", stopReason: "end_turn", usage: { inputTokens: 1, outputTokens: 1 } },
+      ],
+    ]);
+    const agent = createAgent({ provider, model: "fake" });
+    const { message } = await collect(agent.stream("q", { conversationId: "c" }));
+    const blocks = message && Array.isArray(message.content) ? message.content : [];
+    const thinking = blocks.find((b): b is Extract<(typeof blocks)[number], { type: "thinking" }> => b.type === "thinking");
+    expect(thinking?.text).toBe("hmm hmm");
+    expect(thinking?.signature).toBe("sig_1");
+    expect(typeof thinking?.ms).toBe("number");
+  });
 });
