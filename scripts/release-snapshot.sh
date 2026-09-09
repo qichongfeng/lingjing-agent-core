@@ -1,10 +1,43 @@
 #!/usr/bin/env bash
-# 快照发版:bump beta 号 → 构建 → 测试 → 发布两个包 → 更新 tooolx-prompt 引用
-# 用法:./scripts/release-snapshot.sh
-# 可用环境变量:TOOLX_DIR(默认 ~/lib/web/tooolx-prompt)
+# 发版与本地验证打包(一条脚本两个动作,按需选):
+#   ./scripts/release-snapshot.sh          发版:bump beta → 构建 → 测试 → 发布 → commit → 更新 tooolx 引用
+#   ./scripts/release-snapshot.sh --pack   只打包不发版:构建 → 测试 → pnpm pack 出 tarball(供 tooolx 本地验证)
+# 发版纪律:提交≠发版。core 的 main 可领先 registry;只在 tooolx 要用新能力 /
+# 一个主题批次收口 / 修消费端正在挨的 bug 时发版。平时想验证用 --pack 的
+# tarball(tarball 是解包的真实文件、非项目外软链,Turbopack 不拒)。
+# 可用环境变量:TOOLX_DIR(默认 ~/lib/web/tooolx-prompt)、PACK_PACKAGES(--pack 打哪些包,默认 core+provider-openai)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 TOOLX_DIR="${TOOLX_DIR:-$HOME/lib/web/tooolx-prompt}"
+
+# ---------- --pack:只打包,不动版本、不发 npm、不碰 tooolx ----------
+if [ "${1:-}" = "--pack" ]; then
+	PACK_DIR="$(pwd)/pack"
+	PACK_PACKAGES="${PACK_PACKAGES:-core provider-openai}"
+	rm -rf "$PACK_DIR" && mkdir -p "$PACK_DIR"
+	echo '==> 构建'
+	pnpm -r build > /dev/null
+	echo '==> 测试'
+	pnpm -r test > /dev/null 2>&1 || { echo '测试失败,已中止打包(版本未动,可安全重跑)'; exit 1; }
+	echo '==> 打包(不发 npm)'
+	# pnpm 10 的 pack 不支持 --filter/--pack-destination 组合:进目录打、再搬到 PACK_DIR
+	for p in $PACK_PACKAGES; do
+		(
+			cd "packages/$p"
+			rm -f ./*.tgz
+			pnpm pack > /dev/null
+			mv ./*.tgz "$PACK_DIR/"
+		)
+	done
+	CORE_VER=$(node -p "require('./packages/core/package.json').version")
+	PROV_VER=$(node -p "require('./packages/provider-openai/package.json').version")
+	echo "✅ tarball 在 $PACK_DIR/(git 已忽略 *.tgz)"
+	echo "   tooolx 本地验证(dev server 需重启;验证完正式发版会把引用切回 registry):"
+	echo "   cd $TOOLX_DIR && pnpm add \\"
+	echo "     '$PACK_DIR/lingjing-agent-core-$CORE_VER.tgz' \\"
+	echo "     '$PACK_DIR/lingjing-agent-provider-openai-$PROV_VER.tgz'"
+	exit 0
+fi
 
 # 1. 计算下一个 beta 号(0.1.0-beta.3 → 0.1.0-beta.4;无 beta 段则追加 -beta.1)
 CURRENT=$(node -p "require('./packages/core/package.json').version")
