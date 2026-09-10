@@ -83,21 +83,15 @@ npm install @lingjing-agent/mcp            # bridge an external MCP server's too
 ```
 
 ```ts
-import {
-  createWebSearchTool,
-  createReadFeedTool,
-  createFetchJsonTool,
-  createWebFetchTool,
-} from "@lingjing-agent/tools";
+import { createWebTools } from "@lingjing-agent/tools";
 import { createFsTools, createSafeShell, createGrepTool } from "@lingjing-agent/tools/node"; // Node side only
 
 const agent = createAgent({
   /* provider, model, … */
   tools: [
-    createWebSearchTool({ apiKey: process.env.BRAVE_API_KEY! }),// search API → {title,url,snippet}[]
-    createReadFeedTool(),                                       // RSS/Atom → structured entries
-    createFetchJsonTool(),                                      // JSON API GET → pretty value
-    createWebFetchTool(),                                       // static-page GET → Markdown, 15 min cache (+optional Readability via /node)
+    // web_fetch (universal URL reader) + wiki_search + news_search; add
+    // webSearch: { apiKey } for keyed web search (+optional Readability via /node)
+    ...createWebTools({ wiki: { languages: ["zh", "en"] } }),
     ...createFsTools({ root: process.cwd() }),                  // path-confined read/write/list/delete
     createSafeShell({ allowlist: ["git", "ls", "cat", "rg"] }), // no metachars, spawn(shell:false), timeout
     createGrepTool({ root: process.cwd() }),                    // content search (+ createGlobTool)

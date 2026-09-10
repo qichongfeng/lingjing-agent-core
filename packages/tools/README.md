@@ -6,7 +6,7 @@ Built-in tools for [`@lingjing-agent/core`](https://www.npmjs.com/package/@lingj
 
 | Entry | Runtime | Contents |
 | --- | --- | --- |
-| `@lingjing-agent/tools` | **Node / browser / Edge / mini-program** | `createWebTools()` → `web_fetch` (universal reader) · `wiki_search` · `news_search` (+ keyed `web_search`, narrow `fetch_json`/`read_feed` factories) — zero `node:*` imports, network only through core's `HttpTransport` |
+| `@lingjing-agent/tools` | **Node / browser / Edge / mini-program** | `createWebTools()` → `web_fetch` (universal reader) · `wiki_search` · `news_search` (+ keyed `web_search`) — zero `node:*` imports, network only through core's `HttpTransport` |
 | `@lingjing-agent/tools/node` | **Node / Electron / Tauri-main only** | `fs` (path-confined) · hardened `shell` · `glob` · `grep` · Readability extractor |
 
 The platform split is the package's internal structure, not your problem: import the main entry anywhere; import `./node` only from Node-side code (that import is the single point where platform-specific code enters your bundle).
@@ -47,7 +47,6 @@ A plain HTTP GET against today's web fails more often than it succeeds: JS-rende
 | `wiki_search` | Wikipedia API (any language, **no key**, CORS-open) | ★★★ — free, browser-direct |
 | `news_search` | Hacker News via Algolia (**no key**, CORS-open) | ★★★ — tech news, newest-first option |
 | `web_search` | host-keyed search API (Brave / Tavily / Serper) | ★★★ — server-rendered snippets, no scraping |
-| `read_feed` | RSS 2.0 / Atom feeds | ★★★ — structured XML, no anti-bot |
 | `web_fetch` | universal URL GET — JSON / feeds / HTML auto-dispatch | ★★★ JSON·feed / ★☆☆ HTML (static pages only) |
 
 Every tool ships with `permissions.network: true` (hosts can gate) and tags for `allowedToolTags` matching.
@@ -73,22 +72,6 @@ createWebSearchTool({ engine: "brave", apiKey: process.env.BRAVE_API_KEY! }) // 
 
 Returns `[{title, url, snippet}]` as JSON. The API key is **host-owned configuration** — exactly like OAuth credentials in the MCP package — never something the model supplies. Snippets often answer the question outright; fetch a result URL only when detail is needed. 15 s timeout, `maxResults` 1–10 (default 5).
 
-## read_feed
-
-```ts
-createReadFeedTool() // + optional { defaultLimit, maxBytes, timeoutMs }
-```
-
-Fetches an RSS/Atom feed and returns entries as `[{title, url, date, summary}]`, most recent first as the feed orders them. News, blogs, changelogs, release notes — anywhere a site offers a feed, this beats scraping the page. Zero-dependency tolerance-first parsing: CDATA, XML/numeric entities, `dc:date`, Atom `rel="alternate"` links, and HTML inside summaries (distilled to Markdown, links survive). 256 KiB body cap, `limit` 1–50 (default 10).
-
-## fetch_json
-
-```ts
-createFetchJsonTool({ headers: { authorization: `Bearer ${process.env.API_KEY!}` } })
-```
-
-GETs a JSON endpoint and returns the parsed value pretty-printed (data lookups, catalogs, docs APIs). Request headers come from the **host** (`opts.headers` — credentials), never from the model. Non-JSON responses get a clear error pointing at `web_fetch`; a body cut by the byte cap reports itself instead of a confusing parse error. 128 KiB cap, 30 s timeout.
-
 ## web_fetch — the universal URL reader
 
 ```ts
@@ -106,7 +89,7 @@ ONE tool, one decision — "read this URL". The response shape picks the treatme
 
 Successful results cached per URL (+feed limit) for 15 min (`cacheTtlMs`, `0` disables). 128 KiB body cap, 30 s timeout. HTML works for static, server-rendered pages — it does not fight SPAs or anti-bot fronts. Request headers come from the host (`opts.headers`); the default UA is honest and self-identifying, and a browser-like UA is your policy call.
 
-The narrow factories (`createFetchJsonTool` / `createReadFeedTool`) remain for hosts wanting strict single-shape tools.
+The feed parser (`parseFeed`) and `htmlToMarkdown` are exported for direct use.
 
 ## createWebTools — the one-call toolbox
 
@@ -142,8 +125,5 @@ createWebFetchTool({ extractor: createReadabilityExtractor() })
 Runtimes without a global `fetch` (WeChat mini-programs) inject a transport — one whitelisted proxy endpoint makes every web tool work:
 
 ```ts
-createWebSearchTool({ apiKey, transport: createWxTransport(wx) });
-createReadFeedTool({ transport: createWxTransport(wx) });
-createFetchJsonTool({ transport: createWxTransport(wx) });
-createWebFetchTool({ transport: createWxTransport(wx) });
+createWebTools({ wiki: { transport: createWxTransport(wx) }, fetch: { transport: createWxTransport(wx) } });
 ```

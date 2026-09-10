@@ -1,24 +1,16 @@
-// read_feed tool — fetch an RSS 2.0 / Atom feed and return its entries as
-// structured JSON.
+// RSS 2.0 / Atom feed parsing — shared by web_fetch's content dispatch (a
+// feed-shaped response is parsed into entries right inside the universal
+// reader) and available to hosts directly.
 //
 // Feeds are the most reliable read channel on the web: structured XML,
-// server-rendered, no anti-bot, no SPA shell. News, blogs, changelogs,
-// release notes — anywhere a site offers a feed, this beats scraping the
-// HTML page (web_fetch) on both coverage and stability.
-//
-// Zero-dependency, tolerance-first parsing: feeds in the wild routinely
-// carry HTML inside descriptions, CDATA sections, bare entities, and
-// namespace-prefixed tags (dc:date), so fields are extracted with tolerant
-// regex scans and everything optional except a usable link/title. Same
-// family discipline: HttpTransport only, http(s) only, byte cap, network
-// permission, tags ["http", "feed"].
+// server-rendered, no anti-bot, no SPA shell. Zero-dependency,
+// tolerance-first parsing: feeds in the wild routinely carry HTML inside
+// descriptions, CDATA sections, bare entities, and namespace-prefixed tags
+// (dc:date), so fields are extracted with tolerant regex scans and
+// everything is optional except a usable link/title.
 
-import { fetchTransport, type HttpTransport, type Tool, type ToolResultValue } from "@lingjing-agent/core";
 import { htmlToMarkdown } from "./html-to-markdown.js";
-import { parseAllowedUrl, readBodyText, requestError, transportGet } from "./shared.js";
 
-const DEFAULT_LIMIT = 10;
-const MAX_LIMIT = 50;
 const SUMMARY_CAP = 1000;
 
 export interface FeedItem {
@@ -28,102 +20,14 @@ export interface FeedItem {
   summary?: string;
 }
 
-export interface ReadFeedToolOptions {
-  /** Custom transport (e.g. mini-program wx.request bridge). Default fetchTransport(). */
-  transport?: HttpTransport;
-  /** Max bytes read from the response body. Default 256 KiB. */
-  maxBytes?: number;
-  /** Tool-level timeout — also caps the whole body read. Default 30_000 ms. */
-  timeoutMs?: number;
-  /** Allowed URL schemes. Default ["http:", "https:"]. */
-  allowedProtocols?: string[];
-  /** Items returned when the call does not specify `limit`. Default 10 (max 50). */
-  defaultLimit?: number;
-}
-
-export function createReadFeedTool(opts: ReadFeedToolOptions = {}): Tool {
-  const transport = opts.transport ?? fetchTransport();
-  const maxBytes = opts.maxBytes ?? 256 * 1024;
-  const timeoutMs = opts.timeoutMs ?? 30_000;
-  const allowedProtocols = new Set(opts.allowedProtocols ?? ["http:", "https:"]);
-  const defaultLimit = clampLimit(opts.defaultLimit ?? DEFAULT_LIMIT);
-
-  return {
-    name: "read_feed",
-    description:
-      "Fetch an RSS or Atom feed URL and return its entries as JSON " +
-      "([{title, url, date, summary}], most recent first as the feed orders " +
-      "them). Feeds are structured and reliable — the best way to read news, " +
-      "blogs, changelogs, and release notes.",
-    inputSchema: {
-      jsonSchema: {
-        type: "object",
-        properties: {
-          url: { type: "string", description: "Absolute http(s) URL of an RSS/Atom feed." },
-          limit: { type: "number", description: `Max entries to return (1-${MAX_LIMIT}). Default ${DEFAULT_LIMIT}.` },
-        },
-        required: ["url"],
-        additionalProperties: false,
-      },
-    },
-    timeoutMs,
-    permissions: { network: true, tags: ["http", "feed"] },
-    async execute(raw, ctx): Promise<ToolResultValue> {
-      const parsed = parseAllowedUrl(raw, allowedProtocols);
-      if (!parsed.ok) return { content: parsed.error, isError: true };
-      const url = parsed.url.toString();
-      const input = raw as { limit?: unknown };
-      const limit = typeof input.limit === "number" && Number.isFinite(input.limit)
-        ? clampLimit(Math.floor(input.limit))
-        : defaultLimit;
-
-      let resp;
-      try {
-        resp = await transportGet(transport, url, {
-          accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
-          signal: ctx.signal,
-        });
-      } catch (err) {
-        return requestError(err, ctx.signal.aborted);
-      }
-
-      let body: { text: string; truncated: boolean };
-      try {
-        body = await readBodyText(resp, maxBytes);
-      } catch (err) {
-        return requestError(err, ctx.signal.aborted);
-      }
-
-      if (resp.status >= 400) {
-        return { content: `url: ${url}\nstatus: ${resp.status} ${resp.statusText}`, isError: true };
-      }
-
-      const feed = parseFeed(body.text, limit);
-      if (feed === undefined) {
-        const cut = body.truncated ? ` (body truncated at ${maxBytes} bytes — entries may be cut off)` : "";
-        return { content: `No RSS/Atom entries found at ${url}${cut} — not a feed?`, isError: true };
-      }
-      const header =
-        `feed: ${feed.title ?? "(untitled)"}\nurl: ${url}` +
-        (body.truncated ? `\n[body truncated at ${maxBytes} bytes — later entries may be cut]` : "") +
-        `\nitems: ${feed.items.length}${feed.omitted !== undefined ? ` (${feed.omitted} more omitted)` : ""}`;
-      return { content: `${header}\n${JSON.stringify(feed.items, null, 2)}` };
-    },
-  };
-}
-
-function clampLimit(n: number): number {
-  return Math.max(1, Math.min(MAX_LIMIT, n));
-}
-
 export interface ParsedFeed {
   title?: string;
   items: FeedItem[];
   omitted?: number;
 }
 
-/** Parse RSS 2.0 or Atom; undefined when neither shape matches. Shared with
- *  web_fetch's universal reader (feed responses dispatched by content sniff). */
+/** Parse RSS 2.0 or Atom; undefined when neither shape matches. `limit` is
+ *  expected pre-clamped by the caller (web_fetch clamps to 1..50). */
 export function parseFeed(xml: string, limit: number): ParsedFeed | undefined {
   const atomEntries = collectBlocks(xml, "entry");
   const isAtom = atomEntries.length > 0;

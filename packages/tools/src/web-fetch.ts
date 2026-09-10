@@ -10,9 +10,7 @@
 //     code survive; optional Readability extractor), static pages only
 //   anything else (text, non-feed XML, …)       → raw body
 //
-// The narrow factories (createFetchJsonTool / createReadFeedTool) remain for
-// hosts that want strict single-shape tools; this one trades strictness for
-// "one decision: read this URL".
+// Feed parsing comes from feed-parse.ts (also exported for direct use).
 //
 // Family discipline: HttpTransport only (zero node:* imports — Node, browsers,
 // Edge, mini-programs), http(s) only, byte-capped streaming body read,
@@ -23,7 +21,7 @@
 
 import { fetchTransport, type HttpTransport, type Tool, type ToolResultValue } from "@lingjing-agent/core";
 import { htmlToMarkdown } from "./html-to-markdown.js";
-import { parseFeed } from "./read-feed.js";
+import { parseFeed } from "./feed-parse.js";
 import { parseAllowedUrl, readBodyText, requestError, transportGet } from "./shared.js";
 
 const DEFAULT_CACHE_TTL_MS = 15 * 60_000;

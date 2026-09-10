@@ -8,17 +8,13 @@
 // layer; importing "./node" is the only step where platform-specific code
 // enters your bundle.
 //
-// The reliable-first web toolbox: web_search (host-keyed search API) and
-// read_feed (RSS/Atom) for discovery and structured reads, fetch_json for
-// JSON APIs, and web_fetch as a best-effort Markdown reader for static,
-// server-rendered pages.
+// The reliable-first web toolbox: wiki_search / news_search (keyless) and
+// web_search (host-keyed) for discovery, and web_fetch — the universal URL
+// reader that auto-dispatches JSON / RSS·Atom / HTML by what the server
+// returns. parseFeed / htmlToMarkdown are exported for direct use.
 
 export { createWebFetchTool } from "./web-fetch.js";
 export type { WebFetchToolOptions, HtmlExtractor } from "./web-fetch.js";
-export { createFetchJsonTool } from "./fetch-json.js";
-export type { FetchJsonToolOptions } from "./fetch-json.js";
-export { createReadFeedTool } from "./read-feed.js";
-export type { ReadFeedToolOptions, FeedItem } from "./read-feed.js";
 export { createWebSearchTool } from "./web-search.js";
 export type { WebSearchToolOptions, WebSearchEngine, WebSearchResult } from "./web-search.js";
 export { createWikiSearchTool } from "./wiki-search.js";
@@ -26,5 +22,7 @@ export type { WikiSearchToolOptions, WikiSearchResult } from "./wiki-search.js";
 export { createNewsSearchTool } from "./news-search.js";
 export type { NewsSearchToolOptions, NewsSearchResult } from "./news-search.js";
 export { htmlToMarkdown } from "./html-to-markdown.js";
+export { parseFeed } from "./feed-parse.js";
+export type { FeedItem, ParsedFeed } from "./feed-parse.js";
 export { createWebTools } from "./web-tools.js";
 export type { WebToolsOptions } from "./web-tools.js";
