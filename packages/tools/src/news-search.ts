@@ -46,10 +46,11 @@ export function createNewsSearchTool(opts: NewsSearchToolOptions = {}): Tool {
   return {
     name: "news_search",
     description:
-      "Search tech news (Hacker News aggregator) and return stories as JSON " +
+      "Search news via Hacker News (tech-community source: tech, science, and " +
+      "major current events through that lens) and return stories as JSON " +
       "([{title, url, points, comments, author, createdAt}]). Pass recent: true " +
-      "for newest-first. Scope is technology news — say so when the user asks " +
-      "about general current events.",
+      "for newest-first. Content is ENGLISH — translate the query to English " +
+      "before searching; say so when the user asks about non-tech or local news.",
     inputSchema: {
       jsonSchema: {
         type: "object",

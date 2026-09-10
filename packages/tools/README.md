@@ -61,7 +61,7 @@ createNewsSearchTool()                            // Hacker News; { recent: true
 ```
 
 - `wiki_search` → `[{title, url, snippet, lang}]`. Concepts, definitions, factual lookups; the first choice before any keyed web search.
-- `news_search` → `[{title, url, points, comments, author, createdAt}]`, scope is **tech news** (HN) — the tool description tells the model to say so for general-current-events questions.
+- `news_search` → `[{title, url, points, comments, author, createdAt}]` — Hacker News, i.e. a **tech-community lens**: tech + science + major current events; English-only content (the tool description tells the model to translate queries and to flag scope for local/non-tech news).
 - Caveat: reachability follows the user's network (e.g. `*.wikipedia.org` is unreachable from mainland China without a proxy) — failures surface as tool errors for the model to report honestly.
 
 ## web_search (keyed)
