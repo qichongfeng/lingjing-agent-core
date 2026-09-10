@@ -21,4 +21,8 @@ export { createReadFeedTool } from "./read-feed.js";
 export type { ReadFeedToolOptions, FeedItem } from "./read-feed.js";
 export { createWebSearchTool } from "./web-search.js";
 export type { WebSearchToolOptions, WebSearchEngine, WebSearchResult } from "./web-search.js";
+export { createWikiSearchTool } from "./wiki-search.js";
+export type { WikiSearchToolOptions, WikiSearchResult } from "./wiki-search.js";
+export { createNewsSearchTool } from "./news-search.js";
+export type { NewsSearchToolOptions, NewsSearchResult } from "./news-search.js";
 export { htmlToMarkdown } from "./html-to-markdown.js";

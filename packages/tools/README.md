@@ -46,6 +46,8 @@ A plain HTTP GET against today's web fails more often than it succeeds: JS-rende
 
 | Tool | Channel | Reliability |
 | --- | --- | --- |
+| `wiki_search` | Wikipedia API (any language, **no key**, CORS-open) | ★★★ — free, browser-direct |
+| `news_search` | Hacker News via Algolia (**no key**, CORS-open) | ★★★ — tech news, newest-first option |
 | `web_search` | host-keyed search API (Brave / Tavily / Serper) | ★★★ — server-rendered snippets, no scraping |
 | `read_feed` | RSS 2.0 / Atom feeds | ★★★ — structured XML, no anti-bot |
 | `fetch_json` | public JSON APIs | ★★★ — structured, rarely gated |
@@ -53,7 +55,20 @@ A plain HTTP GET against today's web fails more often than it succeeds: JS-rende
 
 Every tool ships with `permissions.network: true` (hosts can gate) and tags for `allowedToolTags` matching.
 
-## web_search
+## wiki_search / news_search — keyless search
+
+The two searches that need **no API key and run browser-direct** (both send `Access-Control-Allow-Origin: *`):
+
+```ts
+createWikiSearchTool({ languages: ["zh", "en"] }) // Wikipedia, multilingual merge
+createNewsSearchTool()                            // Hacker News; { recent: true } for newest-first
+```
+
+- `wiki_search` → `[{title, url, snippet, lang}]`. Concepts, definitions, factual lookups; the first choice before any keyed web search.
+- `news_search` → `[{title, url, points, comments, author, createdAt}]`, scope is **tech news** (HN) — the tool description tells the model to say so for general-current-events questions.
+- Caveat: reachability follows the user's network (e.g. `*.wikipedia.org` is unreachable from mainland China without a proxy) — failures surface as tool errors for the model to report honestly.
+
+## web_search (keyed)
 
 ```ts
 createWebSearchTool({ engine: "brave", apiKey: process.env.BRAVE_API_KEY! }) // or "tavily" | "serper"
