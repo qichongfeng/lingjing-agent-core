@@ -49,7 +49,9 @@ export function createNewsSearchTool(opts: NewsSearchToolOptions = {}): Tool {
       "Search news via Hacker News (tech-community source: tech, science, and " +
       "major current events through that lens) and return stories as JSON " +
       "([{title, url, points, comments, author, createdAt}]). Pass recent: true " +
-      "for newest-first. Content is ENGLISH — translate the query to English " +
+      "for newest-first. The output starts with an as_of UTC timestamp — judge " +
+      "each story's recency (createdAt) against it, not against your training " +
+      "data's sense of time. Content is ENGLISH — translate the query to English " +
       "before searching; say so when the user asks about non-tech or local news.",
     inputSchema: {
       jsonSchema: {
@@ -123,7 +125,8 @@ export function createNewsSearchTool(opts: NewsSearchToolOptions = {}): Tool {
         };
       });
       if (results.length === 0) return { content: `No news results for: ${query}` };
-      return { content: JSON.stringify(results, null, 2) };
+      // The model has no clock: anchor recency judgments to this timestamp.
+      return { content: `as_of: ${new Date().toISOString()}\n${JSON.stringify(results, null, 2)}` };
     },
   };
 }

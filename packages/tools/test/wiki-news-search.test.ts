@@ -136,7 +136,8 @@ describe("createNewsSearchTool", () => {
     expect(reqs[0]?.url).toBe(
       "https://hn.algolia.com/api/v1/search?query=typescript&tags=story&hitsPerPage=8",
     );
-    const results = JSON.parse(r.content as string) as Array<Record<string, unknown>>;
+    expect(r.content as string).toMatch(/^as_of: \d{4}-\d{2}-\d{2}T/); // recency anchor
+    const results = JSON.parse((r.content as string).slice((r.content as string).indexOf("["))) as Array<Record<string, unknown>>;
     expect(results[0]?.points).toBe(1042);
     expect(results[0]?.comments).toBe(356);
     expect(results[0]?.source).toBe("hackernews");
