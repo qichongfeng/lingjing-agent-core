@@ -62,7 +62,7 @@ export function createWebSearchTool(opts: WebSearchToolOptions): Tool {
     description:
       "Search the web and return entries as JSON ([{title, url, snippet}]). " +
       "Use for current information and discovery; snippets often answer the " +
-      "question directly — fetch a result URL only when detail is needed.",
+      "question directly — read a result URL only when detail is needed.",
     inputSchema: {
       jsonSchema: {
         type: "object",
