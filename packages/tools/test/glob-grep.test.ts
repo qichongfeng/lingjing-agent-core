@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { promises as fsp } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createGlobTool, createGrepTool } from "../src/index.js";
+import { createGlobTool, createGrepTool } from "../src/node/index.js";
 import { testCtx } from "./helpers.js";
 
 let root: string;

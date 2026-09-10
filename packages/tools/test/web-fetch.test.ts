@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { AbortError, type HttpTransport, type HttpTransportResponse } from "@lingjing-agent/core";
-import { createWebFetchTool, htmlToText } from "../src/index.js";
+import { AbortError, type HttpTransport, type HttpTransportRequest, type HttpTransportResponse } from "@lingjing-agent/core";
+import { createWebFetchTool, htmlToMarkdown } from "../src/index.js";
 
 function testCtx(signal?: AbortSignal) {
   return {
@@ -149,20 +149,110 @@ describe("createWebFetchTool", () => {
   });
 });
 
-describe("htmlToText", () => {
-  it("keeps <pre>/<li> line structure readable", () => {
-    const out = htmlToText("<ul><li>one</li><li>two</li></ul><pre>code\nblock</pre>");
-    expect(out).toContain("one");
-    expect(out).toContain("two");
-    expect(out).toContain("code\nblock");
+describe("htmlToMarkdown", () => {
+  it("keeps <pre>/<li> structure: list markers + fenced code", () => {
+    const out = htmlToMarkdown("<ul><li>one</li><li>two</li></ul><pre>code\nblock</pre>");
+    expect(out).toContain("- one");
+    expect(out).toContain("- two");
+    expect(out).toContain("```\ncode\nblock\n```");
+  });
+
+  it("heading levels, links (resolved against the page URL), code language, bold", () => {
+    const html =
+      "<h2>Docs</h2>" +
+      '<p>See <a href="/guide">the <b>guide</b></a> and ' +
+      '<a href="https://abs.example/x">abs</a>.</p>' +
+      '<pre class="language-ts"><code>const a = 1;</code></pre>';
+    const out = htmlToMarkdown(html, "https://docs.example.com/intro");
+    expect(out).toContain("## Docs");
+    expect(out).toContain("[the **guide**](https://docs.example.com/guide)"); // relative resolved
+    expect(out).toContain("[abs](https://abs.example/x)");
+    expect(out).toContain("```ts\nconst a = 1;\n```");
+  });
+
+  it("captures <title> as the leading heading and drops the rest of <head>", () => {
+    const out = htmlToMarkdown(
+      "<html><head><title>My Page</title><meta name=\"x\" content=\"noise\"></head><body><p>hi</p></body></html>",
+    );
+    expect(out.startsWith("# My Page")).toBe(true);
+    expect(out).not.toContain("noise");
+    expect(out).toContain("hi");
+  });
+
+  it("title identical to the body's first heading is not duplicated", () => {
+    const out = htmlToMarkdown(
+      "<html><head><title>Example Domain</title></head><body><h1>Example Domain</h1><p>text</p></body></html>",
+    );
+    expect(out.match(/^# Example Domain$/gm)).toHaveLength(1);
+  });
+
+  it("images become markdown refs; data: URLs are summarized instead", () => {
+    const out = htmlToMarkdown('<p><img src="/pic.png" alt="A pic"> <img src="data:image/png;base64,xx" alt="big"></p>', "https://x.example/");
+    expect(out).toContain("![A pic](https://x.example/pic.png)");
+    expect(out).not.toContain("base64");
   });
 
   it("decodes numeric entities and drops invalid ones", () => {
-    expect(htmlToText("&#65;&#x4e2d;")).toBe("A中");
-    expect(htmlToText("&#999999999;")).toContain("�");
+    expect(htmlToMarkdown("&#65;&#x4e2d;")).toBe("A中");
+    expect(htmlToMarkdown("&#999999999;")).toContain("�");
   });
 
-  it("drops comments", () => {
-    expect(htmlToText("a<!-- hidden -->b")).toBe("a b");
+  it("drops comments and script/style", () => {
+    expect(htmlToMarkdown("a<!-- hidden -->b")).toBe("a b");
+    expect(htmlToMarkdown('<style>.x{}</style><script>bad()</script>ok')).toBe("ok");
+  });
+});
+
+describe("web_fetch cache + host headers", () => {
+  function recorder(respFor: () => HttpTransportResponse): { t: HttpTransport; calls: number } {
+    const state = { calls: 0 };
+    return {
+      get calls() {
+        return state.calls;
+      },
+      t: async (_req: HttpTransportRequest) => {
+        state.calls += 1;
+        return respFor();
+      },
+    };
+  }
+
+  it("caches successful fetches per URL for the TTL (no second request)", async () => {
+    const r = recorder(() => ({ status: 200, statusText: "OK", headers: {}, body: bodyOf("cached page") }));
+    const tool = createWebFetchTool({ transport: r.t, cacheTtlMs: 60_000 });
+    const a = await tool.execute({ url: "https://example.com/same" }, testCtx());
+    const b = await tool.execute({ url: "https://example.com/same" }, testCtx());
+    expect(r.calls).toBe(1);
+    expect(b.content).toBe(a.content);
+  });
+
+  it("cacheTtlMs:0 disables caching", async () => {
+    const r = recorder(() => ({ status: 200, statusText: "OK", headers: {}, body: bodyOf("page") }));
+    const tool = createWebFetchTool({ transport: r.t, cacheTtlMs: 0 });
+    await tool.execute({ url: "https://example.com/same" }, testCtx());
+    await tool.execute({ url: "https://example.com/same" }, testCtx());
+    expect(r.calls).toBe(2);
+  });
+
+  it("errors are not cached", async () => {
+    let status = 500;
+    const r = recorder(() => ({ status, statusText: "Boom", headers: {}, body: bodyOf("oops") }));
+    const tool = createWebFetchTool({ transport: r.t });
+    await tool.execute({ url: "https://example.com/flaky" }, testCtx());
+    status = 200;
+    const ok = await tool.execute({ url: "https://example.com/flaky" }, testCtx());
+    expect(r.calls).toBe(2);
+    expect(ok.isError).toBeFalsy();
+  });
+
+  it("passes host-configured headers (UA policy is the host's call)", async () => {
+    const reqs: HttpTransportRequest[] = [];
+    const t: HttpTransport = async (req) => {
+      reqs.push(req);
+      return { status: 200, statusText: "OK", headers: {}, body: bodyOf("x") };
+    };
+    const tool = createWebFetchTool({ transport: t, headers: { "user-agent": "Mozilla/5.0 (host decided)" } });
+    await tool.execute({ url: "https://example.com/ua" }, testCtx());
+    expect(reqs[0]?.headers["user-agent"]).toBe("Mozilla/5.0 (host decided)");
   });
 });

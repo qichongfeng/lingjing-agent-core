@@ -517,7 +517,7 @@ lingjing-agent-core/                      (pnpm workspace 根)
 
 ### 6.3 Node / 桌面（Electron / Tauri main）
 
-> 内置工具已回归为可选包：`@lingjing-agent/tools-node`（`createFsTools` / `createSafeShell` / `createGlobTool` / `createGrepTool`，Node/Electron/Tauri-main 专属）与 `@lingjing-agent/tools-fetch`（`createWebFetchTool`，零 `node:` import、走 core `HttpTransport`，跨端可用）。均按 §7 硬化，可选注入 —— 不 import 即不进 bundle。
+> 内置工具现为单一可选包 `@lingjing-agent/tools`，包内分层（2026-09-10 合并自原 `tools-node` + `tools-fetch` 两包）：主入口 = web 工具（`createWebSearchTool` / `createReadFeedTool` / `createFetchJsonTool` / `createWebFetchTool`，零 `node:` import、走 core `HttpTransport`，跨端可用）；`./node` 子入口 = `createFsTools` / `createSafeShell` / `createGlobTool` / `createGrepTool`（Node/Electron/Tauri-main 专属）+ `createReadabilityExtractor`（web_fetch 的 Readability 正文提取，可选 peer 依赖 @mozilla/readability + linkedom）。均按 §7 硬化，可选注入 —— 不 import 即不进 bundle。
 
 - 注入 `createSafeShell({ allowlist: ["git","ls","cat","rg"], timeoutMs })` + `createFsTools({ root: process.cwd() })`（路径 confinement）。`permissionGate` 弹 Electron 对话框 / 推送到 Tauri UI 并 await。
 

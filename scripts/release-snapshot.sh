@@ -29,13 +29,21 @@ if [ "${1:-}" = "--pack" ]; then
 			mv ./*.tgz "$PACK_DIR/"
 		)
 	done
-	CORE_VER=$(node -p "require('./packages/core/package.json').version")
-	PROV_VER=$(node -p "require('./packages/provider-openai/package.json').version")
+	TARBALLS=()
+	for p in $PACK_PACKAGES; do
+		VER=$(node -p "require('./packages/$p/package.json').version")
+		TARBALLS+=("$PACK_DIR/lingjing-agent-$p-$VER.tgz")
+	done
 	echo "✅ tarball 在 $PACK_DIR/(git 已忽略 *.tgz)"
 	echo "   tooolx 本地验证(dev server 需重启;验证完正式发版会把引用切回 registry):"
 	echo "   cd $TOOLX_DIR && pnpm add \\"
-	echo "     '$PACK_DIR/lingjing-agent-core-$CORE_VER.tgz' \\"
-	echo "     '$PACK_DIR/lingjing-agent-provider-openai-$PROV_VER.tgz'"
+	for t in "${TARBALLS[@]}"; do
+		if [ "$t" = "${TARBALLS[${#TARBALLS[@]}-1]}" ]; then
+			echo "     '$t'"
+		else
+			echo "     '$t' \\"
+		fi
+	done
 	exit 0
 fi
 
@@ -49,7 +57,7 @@ NEXT=$(node -e "
 echo "==> 版本:$CURRENT → $NEXT"
 
 # 2. 五个包同步写入新版本
-for p in core provider-openai provider-anthropic tools-node tools-fetch; do
+for p in core provider-openai provider-anthropic tools mcp; do
 	node -e "
 		const f = './packages/$p/package.json';
 		const j = require(f);
@@ -66,7 +74,7 @@ pnpm -r test > /dev/null 2>&1 || { echo '测试失败,已中止发版(版本号�
 
 # 4. 发布
 echo '==> 发布'
-pnpm --filter @lingjing-agent/core --filter @lingjing-agent/provider-openai --filter @lingjing-agent/provider-anthropic --filter @lingjing-agent/tools-node --filter @lingjing-agent/tools-fetch publish --no-git-checks
+pnpm --filter @lingjing-agent/core --filter @lingjing-agent/provider-openai --filter @lingjing-agent/provider-anthropic --filter @lingjing-agent/tools --filter @lingjing-agent/mcp publish --no-git-checks
 
 # 5. 提交版本变更
 git add packages pnpm-lock.yaml

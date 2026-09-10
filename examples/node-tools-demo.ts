@@ -1,4 +1,4 @@
-// node-tools-demo — 内置工具包(tools-node / tools-fetch)的无网络端到端 demo。
+// node-tools-demo — 内置工具包(@lingjing-agent/tools 的 ./node 层)的无网络端到端 demo。
 //
 // 流程:scripted DemoProvider 第 1 轮调 list_dir(真实执行,confined 到 demo
 // 工作区)→ 第 2 轮调 grep(真实搜索)→ 第 3 轮调 read_file 尝试越界读取(被
@@ -18,7 +18,7 @@ import {
   type StopReason,
   type Tool,
 } from "@lingjing-agent/core";
-import { createFsTools, createGrepTool } from "@lingjing-agent/tools-node";
+import { createFsTools, createGrepTool } from "@lingjing-agent/tools/node";
 
 type Step = { toolCallId: string; name: string; input: object } | { text: string };
 

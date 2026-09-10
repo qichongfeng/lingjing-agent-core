@@ -75,24 +75,32 @@ const provider = new OpenAIProvider({
 
 ## Built-in tools (optional)
 
-The core ships none — capability injection is the design. Two optional packages provide hardened, opt-in tools; import only what you pass to `tools`:
+The core ships none — capability injection is the design. Optional packages provide hardened, opt-in tools; import only what you pass to `tools`:
 
 ```bash
-npm install @lingjing-agent/tools-node   # Node/Electron/Tauri-main only
-npm install @lingjing-agent/tools-fetch  # cross-runtime (browser/Edge/mini-program OK)
+npm install @lingjing-agent/tools          # web tools (browser/Edge/mini-program OK); ./node adds fs/shell/glob/grep + Readability
+npm install @lingjing-agent/mcp            # bridge an external MCP server's tools (legacy era, tools only)
 ```
 
 ```ts
-import { createFsTools, createSafeShell, createGrepTool } from "@lingjing-agent/tools-node";
-import { createWebFetchTool } from "@lingjing-agent/tools-fetch";
+import {
+  createWebSearchTool,
+  createReadFeedTool,
+  createFetchJsonTool,
+  createWebFetchTool,
+} from "@lingjing-agent/tools";
+import { createFsTools, createSafeShell, createGrepTool } from "@lingjing-agent/tools/node"; // Node side only
 
 const agent = createAgent({
   /* provider, model, … */
   tools: [
+    createWebSearchTool({ apiKey: process.env.BRAVE_API_KEY! }),// search API → {title,url,snippet}[]
+    createReadFeedTool(),                                       // RSS/Atom → structured entries
+    createFetchJsonTool(),                                      // JSON API GET → pretty value
+    createWebFetchTool(),                                       // static-page GET → Markdown, 15 min cache (+optional Readability via /node)
     ...createFsTools({ root: process.cwd() }),                  // path-confined read/write/list/delete
     createSafeShell({ allowlist: ["git", "ls", "cat", "rg"] }), // no metachars, spawn(shell:false), timeout
     createGrepTool({ root: process.cwd() }),                    // content search (+ createGlobTool)
-    createWebFetchTool(),                                       // http(s) GET → readable text
   ],
 });
 ```
@@ -124,5 +132,5 @@ const handle = chat.send(input, { signal: someExternalSignal }); // or call hand
 ## More
 
 - Design & architecture: [`DESIGN.md`](./DESIGN.md)
-- Built-in tools: [`@lingjing-agent/tools-node`](./packages/tools-node/) · [`@lingjing-agent/tools-fetch`](./packages/tools-fetch/)
+- Built-in tools: [`@lingjing-agent/tools`](./packages/tools/) (main = cross-runtime web tools, `./node` = fs/shell/glob/grep + Readability) · [`@lingjing-agent/mcp`](./packages/mcp/)
 - Runnable examples (RAG injection, ask-user tool, node tools, mini-program): [`examples/`](./examples/)

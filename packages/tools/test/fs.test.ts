@@ -3,7 +3,7 @@ import { promises as fsp } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Tool } from "@lingjing-agent/core";
-import { createFsTools } from "../src/index.js";
+import { createFsTools } from "../src/node/index.js";
 import { testCtx } from "./helpers.js";
 
 let root: string;

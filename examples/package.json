@@ -12,8 +12,7 @@
   },
   "dependencies": {
     "@lingjing-agent/core": "workspace:*",
-    "@lingjing-agent/tools-node": "workspace:*",
-    "@lingjing-agent/tools-fetch": "workspace:*"
+    "@lingjing-agent/tools": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"

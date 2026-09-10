@@ -1,0 +1,61 @@
+{
+  "name": "@lingjing-agent/tools",
+  "version": "0.1.0-beta.7",
+  "description": "Built-in tools for @lingjing-agent/core, one package: main entry is cross-runtime web tools (web_search/read_feed/fetch_json/web_fetch, zero node: imports); the ./node subpath adds Node-only tools (fs/shell/glob/grep) and the Readability extractor.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qichongfeng/lingjing-agent-core.git",
+    "directory": "packages/tools-fetch"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json",
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js",
+      "require": "./dist/node.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@lingjing-agent/core": ">=0.1.0-beta.1",
+    "@mozilla/readability": ">=0.5.0",
+    "linkedom": ">=0.18.0"
+  },
+  "dependencies": {
+    "@lingjing-agent/core": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@mozilla/readability": {
+      "optional": true
+    },
+    "linkedom": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "linkedom": "^0.18.13",
+    "@types/node": "^22.0.0"
+  }
+}

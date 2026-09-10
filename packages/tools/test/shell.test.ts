@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSafeShell } from "../src/index.js";
+import { createSafeShell } from "../src/node/index.js";
 import { testCtx } from "./helpers.js";
 
 describe("createSafeShell", () => {
