@@ -116,14 +116,15 @@ function clampLimit(n: number): number {
   return Math.max(1, Math.min(MAX_LIMIT, n));
 }
 
-interface ParsedFeed {
+export interface ParsedFeed {
   title?: string;
   items: FeedItem[];
   omitted?: number;
 }
 
-/** Parse RSS 2.0 or Atom; undefined when neither shape matches. */
-function parseFeed(xml: string, limit: number): ParsedFeed | undefined {
+/** Parse RSS 2.0 or Atom; undefined when neither shape matches. Shared with
+ *  web_fetch's universal reader (feed responses dispatched by content sniff). */
+export function parseFeed(xml: string, limit: number): ParsedFeed | undefined {
   const atomEntries = collectBlocks(xml, "entry");
   const isAtom = atomEntries.length > 0;
   const blocks = isAtom ? atomEntries : collectBlocks(xml, "item");

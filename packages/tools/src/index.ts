@@ -26,3 +26,5 @@ export type { WikiSearchToolOptions, WikiSearchResult } from "./wiki-search.js";
 export { createNewsSearchTool } from "./news-search.js";
 export type { NewsSearchToolOptions, NewsSearchResult } from "./news-search.js";
 export { htmlToMarkdown } from "./html-to-markdown.js";
+export { createWebTools } from "./web-tools.js";
+export type { WebToolsOptions } from "./web-tools.js";

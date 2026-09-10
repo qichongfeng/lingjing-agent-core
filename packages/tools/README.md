@@ -6,7 +6,7 @@ Built-in tools for [`@lingjing-agent/core`](https://www.npmjs.com/package/@lingj
 
 | Entry | Runtime | Contents |
 | --- | --- | --- |
-| `@lingjing-agent/tools` | **Node / browser / Edge / mini-program** | `web_search` · `read_feed` · `fetch_json` · `web_fetch` — zero `node:*` imports, network only through core's `HttpTransport` |
+| `@lingjing-agent/tools` | **Node / browser / Edge / mini-program** | `createWebTools()` → `web_fetch` (universal reader) · `wiki_search` · `news_search` (+ keyed `web_search`, narrow `fetch_json`/`read_feed` factories) — zero `node:*` imports, network only through core's `HttpTransport` |
 | `@lingjing-agent/tools/node` | **Node / Electron / Tauri-main only** | `fs` (path-confined) · hardened `shell` · `glob` · `grep` · Readability extractor |
 
 The platform split is the package's internal structure, not your problem: import the main entry anywhere; import `./node` only from Node-side code (that import is the single point where platform-specific code enters your bundle).
@@ -19,17 +19,15 @@ npm install @lingjing-agent/tools @mozilla/readability linkedom
 
 ```ts
 import { createAgent } from "@lingjing-agent/core";
-import { createWebSearchTool, createReadFeedTool, createFetchJsonTool, createWebFetchTool } from "@lingjing-agent/tools";
+import { createWebTools } from "@lingjing-agent/tools";
 import { createFsTools, createSafeShell, createGrepTool } from "@lingjing-agent/tools/node"; // Node side only
 
 const agent = createAgent({
   /* provider, model, … */
   tools: [
-    // web layer (any runtime)
-    createWebSearchTool({ apiKey: process.env.BRAVE_API_KEY! }),// search API → {title,url,snippet}[]
-    createReadFeedTool(),                                       // RSS/Atom → structured entries
-    createFetchJsonTool(),                                      // JSON API GET → pretty value
-    createWebFetchTool(),                                       // static-page GET → Markdown, 15 min cache
+    // web layer (any runtime) — web_fetch + wiki_search + news_search in one call;
+    // add webSearch: { apiKey } for keyed web search
+    ...createWebTools({ wiki: { languages: ["zh", "en"] } }),
     // node layer
     ...createFsTools({ root: process.cwd() }),                  // path-confined read/write/list/delete
     createSafeShell({ allowlist: ["git", "ls", "cat", "rg"] }), // no metachars, spawn(shell:false), timeout
@@ -50,8 +48,7 @@ A plain HTTP GET against today's web fails more often than it succeeds: JS-rende
 | `news_search` | Hacker News via Algolia (**no key**, CORS-open) | ★★★ — tech news, newest-first option |
 | `web_search` | host-keyed search API (Brave / Tavily / Serper) | ★★★ — server-rendered snippets, no scraping |
 | `read_feed` | RSS 2.0 / Atom feeds | ★★★ — structured XML, no anti-bot |
-| `fetch_json` | public JSON APIs | ★★★ — structured, rarely gated |
-| `web_fetch` | direct page GET → Markdown | ★☆☆ — static, server-rendered pages only |
+| `web_fetch` | universal URL GET — JSON / feeds / HTML auto-dispatch | ★★★ JSON·feed / ★☆☆ HTML (static pages only) |
 
 Every tool ships with `permissions.network: true` (hosts can gate) and tags for `allowedToolTags` matching.
 
@@ -92,15 +89,34 @@ createFetchJsonTool({ headers: { authorization: `Bearer ${process.env.API_KEY!}`
 
 GETs a JSON endpoint and returns the parsed value pretty-printed (data lookups, catalogs, docs APIs). Request headers come from the **host** (`opts.headers` — credentials), never from the model. Non-JSON responses get a clear error pointing at `web_fetch`; a body cut by the byte cap reports itself instead of a confusing parse error. 128 KiB cap, 30 s timeout.
 
-## web_fetch
+## web_fetch — the universal URL reader
 
 ```ts
-createWebFetchTool() // http(s) GET → Markdown, byte-capped, 15 min/URL cache
+createWebFetchTool() // or via createWebTools
 ```
 
-Best-effort reader for **static, server-rendered** pages: HTML distilled to **Markdown** — heading levels, links (relative hrefs resolved against the page URL, so the model can follow them), fenced code blocks with `language-x` hints, inline code, bold/italic, list items, and images as `![alt](src)`; `<title>` becomes the leading heading (deduped against the body's first heading). Successful results are cached per URL for 15 min (`cacheTtlMs`, `0` disables). 128 KiB body cap, 30 s timeout.
+ONE tool, one decision — "read this URL". The response shape picks the treatment (the model usually cannot know a URL's content type in advance; parameter-based dispatch would just hide selection errors in parameter validation):
 
-Request headers come from the host (`opts.headers`): the default User-Agent is honest and self-identifying, and switching to a browser-like UA is **your** policy call, not the library's default. web_fetch does not fight SPAs or anti-bot fronts — search first, prefer structured channels.
+| Server returns | You get |
+| --- | --- |
+| JSON (content-type, or a body that parses) | pretty-printed JSON |
+| RSS 2.0 / Atom (content-type or XML sniff) | entries as `[{title, url, date, summary}]` (`limit`, default 10) |
+| HTML | Markdown — headings, links resolved against the page URL (followable), code fences with `language-x` hints; optional Readability extractor |
+| anything else | raw body |
+
+Successful results cached per URL (+feed limit) for 15 min (`cacheTtlMs`, `0` disables). 128 KiB body cap, 30 s timeout. HTML works for static, server-rendered pages — it does not fight SPAs or anti-bot fronts. Request headers come from the host (`opts.headers`); the default UA is honest and self-identifying, and a browser-like UA is your policy call.
+
+The narrow factories (`createFetchJsonTool` / `createReadFeedTool`) remain for hosts wanting strict single-shape tools.
+
+## createWebTools — the one-call toolbox
+
+```ts
+tools: [...createWebTools({ wiki: { languages: ["zh", "en"] } })]
+// → [web_fetch, wiki_search, news_search]; each entry: options to configure, false to drop.
+// webSearch: { apiKey } adds keyed web search (never ship a key in client-side code).
+```
+
+Aggregation happens at the factory level, never at the tool level: the model keeps focused, well-named tools (routing by name beats a multi-mode dispatcher).
 
 ## Readability 正文提取(`./node`,DLC)
 

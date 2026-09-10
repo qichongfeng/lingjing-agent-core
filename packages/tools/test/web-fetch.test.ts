@@ -59,12 +59,12 @@ describe("createWebFetchTool", () => {
     expect(c).not.toContain("color:red");
   });
 
-  it("returns non-HTML bodies as-is", async () => {
+  it("returns plain-text bodies as-is", async () => {
     const tool = createWebFetchTool({
-      transport: fakeTransport({ headers: { "content-type": "text/plain" }, body: bodyOf('{"a":1}') }),
+      transport: fakeTransport({ headers: { "content-type": "text/plain" }, body: bodyOf("just some plain text") }),
     });
-    const r = await tool.execute({ url: "https://example.com/data.json" }, testCtx());
-    expect(r.content).toContain('{"a":1}');
+    const r = await tool.execute({ url: "https://example.com/robots.txt" }, testCtx());
+    expect(r.content).toContain("just some plain text");
   });
 
   it("truncates at maxBytes and says so", async () => {
