@@ -17,6 +17,8 @@ if [ "${1:-}" = "--pack" ]; then
 	rm -rf "$PACK_DIR" && mkdir -p "$PACK_DIR"
 	echo '==> 构建'
 	pnpm -r build > /dev/null
+	echo '==> 跨端纯度(主入口不得 import node:*)'
+	node scripts/check-runtime-purity.mjs > /dev/null || { echo '纯度检查失败:通用主入口混入了 Node builtin,已中止打包'; exit 1; }
 	echo '==> 测试'
 	pnpm -r test > /dev/null 2>&1 || { echo '测试失败,已中止打包(版本未动,可安全重跑)'; exit 1; }
 	echo '==> 打包(不发 npm)'
@@ -66,9 +68,11 @@ for p in core provider-openai provider-anthropic tools mcp; do
 	"
 done
 
-# 3. 构建 + 测试(测试挂了就中止,不发出坏版本)
+# 3. 构建 + 纯度 + 测试(挂了就中止,不发出坏版本)
 echo '==> 构建'
 pnpm -r build > /dev/null
+echo '==> 跨端纯度(主入口不得 import node:*)'
+node scripts/check-runtime-purity.mjs > /dev/null
 echo '==> 测试'
 pnpm -r test > /dev/null 2>&1 || { echo '测试失败,已中止发版(版本号未发布,可安全重跑)'; exit 1; }
 
