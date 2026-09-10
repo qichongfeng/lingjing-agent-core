@@ -54,6 +54,8 @@ export { AbortError, TimeoutError, anySignal, detectRuntime, sleep } from "./abo
 export type { HttpTransportRequest, HttpTransportResponse, HttpTransport } from "./transport.js";
 export { fetchTransport } from "./transport.js";
 
+export { concatBytes, decodeUtf8, splitLines, sseDataEvents } from "./sse.js";
+
 export type { RedactPattern, RedactOptions } from "./redact.js";
 export { redact, redactEvents, SECRET_PATTERNS } from "./redact.js";
 

@@ -89,6 +89,23 @@ describe("CompactContextManager", () => {
     }
   });
 
+  test("runId in the fit input stamps the summary note (run's exchange grouping)", async () => {
+    const mgr = new CompactContextManager({ provider: summarizeProvider("RECAP"), model: "fake" });
+    const msgs: Message[] = [];
+    for (let i = 0; i < 10; i++) msgs.push(plainMsg("user", `turn ${i} content`, i));
+    const base = {
+      messages: msgs, tools: [], system: undefined, tokenBudget: 1000,
+      countTokens: (m: Message[]) => Promise.resolve(m.length * 100),
+    };
+    const stamped = await mgr.fit({ ...base, runId: "run-1" });
+    expect(stamped.compacted).toBe(true);
+    expect(stamped.messages[0]?.metadata?.runId).toBe("run-1");
+    // Without a runId the note carries no stamp — groupExchanges' structural
+    // fallback for host-authored history keeps working unchanged.
+    const unstamped = await mgr.fit({ ...base });
+    expect(unstamped.messages[0]?.metadata?.runId).toBeUndefined();
+  });
+
   test("compact forces summarization even under the trigger", async () => {
     const mgr = new CompactContextManager({ provider: summarizeProvider("FORCED"), model: "fake" });
     // 8 messages with default keepLastN:6 → head has 2 msgs to summarize.

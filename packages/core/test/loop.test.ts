@@ -106,6 +106,31 @@ describe("agentic loop", () => {
     expect(message && extractText(message)).toBe("added");
   });
 
+  test("final message IS the persisted history object (identity + run stamp)", async () => {
+    // The object runLoop pushes into history, returns, resolves done with, and
+    // hands to afterResponse must be the SAME instance — hosts locate the turn
+    // via indexOf/===, and memory.append persists what was pushed.
+    const seen: { indexOfResponse: number; runId: unknown }[] = [];
+    const provider = scriptedProvider([textTurn("done")]);
+    const agent = createAgent({
+      provider,
+      model: "fake",
+      hooks: {
+        async afterResponse(ctx) {
+          seen.push({ indexOfResponse: ctx.messages.indexOf(ctx.response), runId: ctx.response.metadata?.runId });
+        },
+      },
+    });
+    const handle = agent.stream("hi", { conversationId: "identity" });
+    const finalMsg = await handle.done;
+
+    expect(extractText(finalMsg)).toBe("done");
+    expect(finalMsg.metadata?.runId).toBeTypeOf("string");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.indexOfResponse).toBeGreaterThanOrEqual(0); // found in history
+    expect(seen[0]?.runId).toBe(finalMsg.metadata?.runId); // same stamped instance
+  });
+
   test("tool error becomes isError tool_result; loop recovers", async () => {
     const provider = scriptedProvider([
       toolCallTurn("fail", {}, 0),

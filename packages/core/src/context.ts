@@ -13,6 +13,10 @@ export interface ContextFitInput {
   system: string | TextContent[] | undefined;
   tokenBudget: number;
   countTokens: (msgs: Message[]) => Promise<number>;
+  /** The run triggering fit/compact. Managers stamp it onto messages they
+   * CREATE (the summary note) so groupExchanges keeps the note inside that
+   * run's exchange instead of rendering a phantom unstamped user turn. */
+  runId?: string;
   /** Run abort signal; a context manager that calls the provider (e.g. to summarize)
    * should thread it into its provider request so a cancelled run halts compaction. */
   signal?: AbortSignal;
@@ -165,6 +169,8 @@ export class CompactContextManager implements ContextManager {
         role: "user",
         content: `${SUMMARY_LABEL}\n${summary}`,
         createdAt: Date.now(),
+        // Group into the triggering run's exchange (see ContextFitInput.runId).
+        ...(input.runId !== undefined && { metadata: { runId: input.runId } }),
       };
       const out = [note, ...tail];
       const before = await input.countTokens(input.messages);

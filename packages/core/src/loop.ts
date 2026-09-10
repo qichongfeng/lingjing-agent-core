@@ -90,7 +90,7 @@ export async function runLoop(opts: LoopOptions): Promise<Message> {
       if (context) {
         const fit = await context.fit({
           messages, tools, system,
-          tokenBudget,
+          tokenBudget, runId,
           countTokens: (msgs) => provider.countTokens?.(msgs, model) ?? Promise.resolve(heuristicTokens(msgs)),
           signal,
         });
@@ -130,12 +130,17 @@ export async function runLoop(opts: LoopOptions): Promise<Message> {
       };
 
       // Stream one turn (with retry on transient provider errors).
-      const { message, stopReason, usage } = await streamTurn(
+      let { message, stopReason, usage } = await streamTurn(
         provider, req, retry, signal, emit, conversationId, turn, now,
       );
+      // Stamp once, up front: the SAME object is pushed into history, returned
+      // to the caller, resolved by handle.done, and handed to afterResponse —
+      // identity between them is load-bearing (hosts locate the turn via
+      // indexOf/===), so never push a copy while returning the original.
+      message = withRunId(message, runId);
       // context_window_exceeded is a compaction signal, not a real reply — don't
       // push the (empty) assistant into history, else memory.append would persist it.
-      if (stopReason !== "context_window_exceeded") messages.push(withRunId(message, runId));
+      if (stopReason !== "context_window_exceeded") messages.push(message);
       lastAssistant = message;
       totalUsage = addUsage(totalUsage, usage);
       consecutiveMaxTokens = stopReason === "max_tokens" ? consecutiveMaxTokens + 1 : 0;
@@ -209,7 +214,7 @@ export async function runLoop(opts: LoopOptions): Promise<Message> {
             }
             overflowRetries++;
             const c = await context.compact({
-              messages, tools, system, tokenBudget,
+              messages, tools, system, tokenBudget, runId,
               countTokens: (msgs) => provider.countTokens?.(msgs, model) ?? Promise.resolve(heuristicTokens(msgs)),
               signal,
             });
