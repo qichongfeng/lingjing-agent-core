@@ -1,4 +1,4 @@
-// RSS 2.0 / Atom feed parsing — shared by web_fetch's content dispatch (a
+// RSS 2.0 / Atom feed parsing — shared by web_read's content dispatch (a
 // feed-shaped response is parsed into entries right inside the universal
 // reader) and available to hosts directly.
 //
@@ -27,7 +27,7 @@ export interface ParsedFeed {
 }
 
 /** Parse RSS 2.0 or Atom; undefined when neither shape matches. `limit` is
- *  expected pre-clamped by the caller (web_fetch clamps to 1..50). */
+ *  expected pre-clamped by the caller (web_read clamps to 1..50). */
 export function parseFeed(xml: string, limit: number): ParsedFeed | undefined {
   const atomEntries = collectBlocks(xml, "entry");
   const isAtom = atomEntries.length > 0;

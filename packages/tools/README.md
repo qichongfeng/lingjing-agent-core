@@ -6,7 +6,7 @@ Built-in tools for [`@lingjing-agent/core`](https://www.npmjs.com/package/@lingj
 
 | Entry | Runtime | Contents |
 | --- | --- | --- |
-| `@lingjing-agent/tools` | **Node / browser / Edge / mini-program** | `createWebTools()` → `web_fetch` (universal reader) · `wiki_search` · `news_search` (+ keyed `web_search`) — zero `node:*` imports, network only through core's `HttpTransport` |
+| `@lingjing-agent/tools` | **Node / browser / Edge / mini-program** | `createWebTools()` → `web_read` (universal reader) · `wiki_search` · `news_search` (+ keyed `web_search`) — zero `node:*` imports, network only through core's `HttpTransport` |
 | `@lingjing-agent/tools/node` | **Node / Electron / Tauri-main only** | `fs` (path-confined) · hardened `shell` · `glob` · `grep` · Readability extractor |
 
 The platform split is the package's internal structure, not your problem: import the main entry anywhere; import `./node` only from Node-side code (that import is the single point where platform-specific code enters your bundle).
@@ -25,7 +25,7 @@ import { createFsTools, createSafeShell, createGrepTool } from "@lingjing-agent/
 const agent = createAgent({
   /* provider, model, … */
   tools: [
-    // web layer (any runtime) — web_fetch + wiki_search + news_search in one call;
+    // web layer (any runtime) — web_read + wiki_search + news_search in one call;
     // add webSearch: { apiKey } for keyed web search
     ...createWebTools({ wiki: { languages: ["zh", "en"] } }),
     // node layer
@@ -47,7 +47,7 @@ A plain HTTP GET against today's web fails more often than it succeeds: JS-rende
 | `wiki_search` | Wikipedia API (any language, **no key**, CORS-open) | ★★★ — free, browser-direct |
 | `news_search` | Hacker News via Algolia (**no key**, CORS-open) | ★★★ — tech news, newest-first option |
 | `web_search` | host-keyed search API (Brave / Tavily / Serper) | ★★★ — server-rendered snippets, no scraping |
-| `web_fetch` | universal URL GET — JSON / feeds / HTML auto-dispatch | ★★★ JSON·feed / ★☆☆ HTML (static pages only) |
+| `web_read` | universal URL GET — JSON / feeds / HTML auto-dispatch | ★★★ JSON·feed / ★☆☆ HTML (static pages only) |
 
 Every tool ships with `permissions.network: true` (hosts can gate) and tags for `allowedToolTags` matching.
 
@@ -72,10 +72,10 @@ createWebSearchTool({ engine: "brave", apiKey: process.env.BRAVE_API_KEY! }) // 
 
 Returns `[{title, url, snippet}]` as JSON. The API key is **host-owned configuration** — exactly like OAuth credentials in the MCP package — never something the model supplies. Snippets often answer the question outright; fetch a result URL only when detail is needed. 15 s timeout, `maxResults` 1–10 (default 5).
 
-## web_fetch — the universal URL reader
+## web_read — the universal URL reader
 
 ```ts
-createWebFetchTool() // or via createWebTools
+createWebReadTool() // or via createWebTools
 ```
 
 ONE tool, one decision — "read this URL". The response shape picks the treatment (the model usually cannot know a URL's content type in advance; parameter-based dispatch would just hide selection errors in parameter validation):
@@ -95,7 +95,7 @@ The feed parser (`parseFeed`) and `htmlToMarkdown` are exported for direct use.
 
 ```ts
 tools: [...createWebTools({ wiki: { languages: ["zh", "en"] } })]
-// → [web_fetch, wiki_search, news_search]; each entry: options to configure, false to drop.
+// → [web_read, wiki_search, news_search]; each entry: options to configure, false to drop.
 // webSearch: { apiKey } adds keyed web search (never ship a key in client-side code).
 ```
 
@@ -103,13 +103,13 @@ Aggregation happens at the factory level, never at the tool level: the model kee
 
 ## Readability 正文提取(`./node`,DLC)
 
-`web_fetch` 默认全页转换 —— 导航/侧栏也保留。Node host 可以注入 **Readability 算法**(Firefox 阅读模式的正文打分提取,`@mozilla/readability`,Apache-2.0)拿到"只剩正文"的输出:
+`web_read` 默认全页转换 —— 导航/侧栏也保留。Node host 可以注入 **Readability 算法**(Firefox 阅读模式的正文打分提取,`@mozilla/readability`,Apache-2.0)拿到"只剩正文"的输出:
 
 ```ts
-import { createWebFetchTool } from "@lingjing-agent/tools";
+import { createWebReadTool } from "@lingjing-agent/tools";
 import { createReadabilityExtractor } from "@lingjing-agent/tools/node";
 
-createWebFetchTool({ extractor: createReadabilityExtractor() })
+createWebReadTool({ extractor: createReadabilityExtractor() })
 ```
 
 - **实测 MDN 文档页**:40.6 KiB/186 链接(全页)→ 29.1 KiB/69 链接(正文),侧栏特征词零残留,代码围栏完整;
@@ -125,5 +125,5 @@ createWebFetchTool({ extractor: createReadabilityExtractor() })
 Runtimes without a global `fetch` (WeChat mini-programs) inject a transport — one whitelisted proxy endpoint makes every web tool work:
 
 ```ts
-createWebTools({ wiki: { transport: createWxTransport(wx) }, fetch: { transport: createWxTransport(wx) } });
+createWebTools({ wiki: { transport: createWxTransport(wx) }, read: { transport: createWxTransport(wx) } });
 ```

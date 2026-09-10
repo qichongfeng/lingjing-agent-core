@@ -84,7 +84,7 @@ npm install @lingjing-agent/tools-fetch  # 跨端(浏览器/Edge/小程序均可
 
 ```ts
 import { createFsTools, createSafeShell, createGrepTool } from "@lingjing-agent/tools-node";
-import { createWebFetchTool } from "@lingjing-agent/tools-fetch";
+import { createWebReadTool } from "@lingjing-agent/tools-fetch";
 
 const agent = createAgent({
   /* provider、model 等 */
@@ -92,7 +92,7 @@ const agent = createAgent({
     ...createFsTools({ root: process.cwd() }),                  // 路径 confinement 的读/写/列/删
     createSafeShell({ allowlist: ["git", "ls", "cat", "rg"] }), // 拒元字符 + spawn(shell:false) + 超时
     createGrepTool({ root: process.cwd() }),                    // 内容搜索(另有 createGlobTool)
-    createWebFetchTool(),                                       // http(s) GET → 可读文本
+    createWebReadTool(),                                       // http(s) GET → 可读文本
   ],
 });
 ```

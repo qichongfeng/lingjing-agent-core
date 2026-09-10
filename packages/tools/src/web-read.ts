@@ -1,4 +1,4 @@
-// web_fetch tool — the universal URL reader: fetch an http(s) URL and get its
+// web_read tool — the universal URL reader: fetch an http(s) URL and get its
 // content back in the right shape, dispatched by what the server ACTUALLY
 // returns (the model usually cannot know a URL's content type in advance —
 // parameter-based dispatch would just move tool-selection errors into
@@ -30,15 +30,15 @@ const DEFAULT_FEED_LIMIT = 10;
 const MAX_FEED_LIMIT = 50;
 
 /**
- * Custom HTML→content extractor for web_fetch (e.g. the Readability-based one
+ * Custom HTML→content extractor for web_read (e.g. the Readability-based one
  * from `@lingjing-agent/tools/node`). Receives the raw HTML and the page
- * URL; return the content to use, or `undefined` to DECLINE — web_fetch then
+ * URL; return the content to use, or `undefined` to DECLINE — web_read then
  * falls back to the built-in Markdown converter. Declining is the contract
  * for "this page has no extractable article" (Readability does exactly that).
  */
 export type HtmlExtractor = (html: string, url: string) => string | undefined | Promise<string | undefined>;
 
-export interface WebFetchToolOptions {
+export interface WebReadToolOptions {
   /** Custom transport (e.g. mini-program wx.request bridge). Default fetchTransport(). */
   transport?: HttpTransport;
   /** Max bytes read from the response body. Default 128 KiB. */
@@ -63,7 +63,7 @@ interface CacheEntry {
   result: ToolResultValue;
 }
 
-export function createWebFetchTool(opts: WebFetchToolOptions = {}): Tool {
+export function createWebReadTool(opts: WebReadToolOptions = {}): Tool {
   const transport = opts.transport ?? fetchTransport();
   const maxBytes = opts.maxBytes ?? 128 * 1024;
   const timeoutMs = opts.timeoutMs ?? 30_000;
@@ -73,9 +73,9 @@ export function createWebFetchTool(opts: WebFetchToolOptions = {}): Tool {
   const extractor = opts.extractor;
 
   return {
-    name: "web_fetch",
+    name: "web_read",
     description:
-      "Fetch an http(s) URL and return its content in the right shape, chosen " +
+      "Read an http(s) URL and return its content in the right shape, chosen " +
       "by what the server returns: JSON APIs → pretty-printed JSON; RSS/Atom " +
       "feeds → entries as JSON (pass limit); HTML pages → Markdown with " +
       "followable links and code blocks; anything else → raw text. HTML works " +

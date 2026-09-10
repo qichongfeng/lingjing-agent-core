@@ -9,7 +9,7 @@
 // - fs (path-confined read/write/list/delete) + hardened shell + glob/grep,
 //   carried over from the former @lingjing-agent/tools-node package;
 // - createReadabilityExtractor: Firefox Reader Mode content scoring for
-//   web_fetch (@mozilla/readability + linkedom, OPTIONAL peerDependencies —
+//   web_read (@mozilla/readability + linkedom, OPTIONAL peerDependencies —
 //   install them yourself).
 
 export { createFsTools } from "./fs.js";

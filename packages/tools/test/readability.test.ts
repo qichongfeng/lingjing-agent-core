@@ -1,10 +1,10 @@
 // createReadabilityExtractor (./node): article extraction strips nav/sidebar,
-// title handling, decline → web_fetch falls back to the built-in converter,
+// title handling, decline → web_read falls back to the built-in converter,
 // extractor failure → fallback, non-HTML bodies bypass the extractor.
 
 import { describe, expect, it } from "vitest";
 import type { HttpTransport, HttpTransportResponse } from "@lingjing-agent/core";
-import { createWebFetchTool } from "../src/index.js";
+import { createWebReadTool } from "../src/index.js";
 import { createReadabilityExtractor } from "../src/node/index.js";
 
 function testCtx(signal?: AbortSignal) {
@@ -90,8 +90,8 @@ describe("createReadabilityExtractor", () => {
     expect(out).toContain("(https://blog.example.com/deep)");
   });
 
-  it("declines on pages with no article → web_fetch falls back to the full-page converter", async () => {
-    const tool = createWebFetchTool({
+  it("declines on pages with no article → web_read falls back to the full-page converter", async () => {
+    const tool = createWebReadTool({
       transport: htmlTransport(LINK_FARM),
       extractor: createReadabilityExtractor(),
     });
@@ -103,7 +103,7 @@ describe("createReadabilityExtractor", () => {
   });
 
   it("a throwing extractor falls back instead of failing the fetch", async () => {
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: htmlTransport(ARTICLE),
       extractor: async () => {
         throw new Error("boom");
@@ -116,7 +116,7 @@ describe("createReadabilityExtractor", () => {
   });
 
   it("explicit undefined (declined) also falls back", async () => {
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: htmlTransport(ARTICLE),
       extractor: () => undefined,
     });
@@ -133,7 +133,7 @@ describe("createReadabilityExtractor", () => {
         headers: { "content-type": "text/plain" },
         body: bodyOf("plain bytes"),
       }) as HttpTransportResponse;
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: t,
       extractor: async () => {
         called = true;

@@ -1,10 +1,10 @@
-// web_fetch universal dispatch: JSON / feed (content-type + XML sniff) / HTML
+// web_read universal dispatch: JSON / feed (content-type + XML sniff) / HTML
 // / raw paths, feed limit, truncation notes, cache keyed by url+limit; and
 // the createWebTools aggregator shape.
 
 import { describe, expect, it } from "vitest";
 import type { HttpTransport, HttpTransportResponse } from "@lingjing-agent/core";
-import { createWebFetchTool, createWebTools } from "../src/index.js";
+import { createWebReadTool, createWebTools } from "../src/index.js";
 
 function testCtx(signal?: AbortSignal) {
   return {
@@ -34,9 +34,9 @@ const RSS = `<?xml version="1.0"?>
 <item><title>Three</title><link>https://f.example/3</link></item>
 </channel></rss>`;
 
-describe("web_fetch universal dispatch", () => {
+describe("web_read universal dispatch", () => {
   it("JSON (by content-type) → pretty JSON", async () => {
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: respOf('{"rate":7.24}', { "content-type": "application/json" }),
     });
     const r = await tool.execute({ url: "https://api.example.com/rates" }, testCtx());
@@ -45,13 +45,13 @@ describe("web_fetch universal dispatch", () => {
   });
 
   it("JSON sniffed from body (no content-type) → pretty JSON", async () => {
-    const tool = createWebFetchTool({ transport: respOf('{"a":[1,2]}', {}) });
+    const tool = createWebReadTool({ transport: respOf('{"a":[1,2]}', {}) });
     const r = await tool.execute({ url: "https://x.example/data" }, testCtx());
     expect(r.content as string).toContain('"a": [');
   });
 
   it("declared JSON but unparseable → raw body with a note", async () => {
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: respOf("not json at all", { "content-type": "application/json" }),
     });
     const r = await tool.execute({ url: "https://x.example/broken" }, testCtx());
@@ -61,7 +61,7 @@ describe("web_fetch universal dispatch", () => {
   });
 
   it("RSS by content-type → entries with feed header and limit", async () => {
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: respOf(RSS, { "content-type": "application/rss+xml" }),
     });
     const r = await tool.execute({ url: "https://f.example/feed", limit: 2 }, testCtx());
@@ -73,13 +73,13 @@ describe("web_fetch universal dispatch", () => {
   });
 
   it("feed sniffed from XML prolog (generic xml content-type) → entries", async () => {
-    const tool = createWebFetchTool({ transport: respOf(RSS, { "content-type": "application/xml" }) });
+    const tool = createWebReadTool({ transport: respOf(RSS, { "content-type": "application/xml" }) });
     const r = await tool.execute({ url: "https://f.example/rss" }, testCtx());
     expect(r.content as string).toContain("items: 3");
   });
 
   it("non-feed XML → raw text", async () => {
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: respOf('<?xml version="1.0"?><doc><x>1</x></doc>', { "content-type": "application/xml" }),
     });
     const r = await tool.execute({ url: "https://x.example/doc" }, testCtx());
@@ -88,7 +88,7 @@ describe("web_fetch universal dispatch", () => {
   });
 
   it("HTML → Markdown (unchanged path)", async () => {
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: respOf("<html><body><h1>Title &amp; More</h1></body></html>", { "content-type": "text/html" }),
     });
     const r = await tool.execute({ url: "https://x.example/page" }, testCtx());
@@ -101,7 +101,7 @@ describe("web_fetch universal dispatch", () => {
       calls += 1;
       return { status: 200, statusText: "OK", headers: { "content-type": "application/rss+xml" }, body: bodyOf(RSS) };
     };
-    const tool = createWebFetchTool({ transport: t, cacheTtlMs: 60_000 });
+    const tool = createWebReadTool({ transport: t, cacheTtlMs: 60_000 });
     await tool.execute({ url: "https://f.example/feed", limit: 1 }, testCtx());
     await tool.execute({ url: "https://f.example/feed", limit: 1 }, testCtx()); // cached
     await tool.execute({ url: "https://f.example/feed", limit: 3 }, testCtx()); // different key → refetch
@@ -109,7 +109,7 @@ describe("web_fetch universal dispatch", () => {
   });
 
   it("limit clamps to 1..50", async () => {
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: respOf(RSS, { "content-type": "application/rss+xml" }),
     });
     const r = await tool.execute({ url: "https://f.example/feed", limit: 999 }, testCtx());
@@ -118,14 +118,14 @@ describe("web_fetch universal dispatch", () => {
 });
 
 describe("createWebTools aggregator", () => {
-  it("default: web_fetch + wiki_search + news_search", () => {
+  it("default: web_read + wiki_search + news_search", () => {
     const tools = createWebTools();
-    expect(tools.map((t) => t.name)).toEqual(["web_fetch", "wiki_search", "news_search"]);
+    expect(tools.map((t) => t.name)).toEqual(["web_read", "wiki_search", "news_search"]);
   });
 
   it("false disables; options pass through; webSearch only when configured", () => {
     const tools = createWebTools({ news: false, wiki: { languages: ["zh"] }, webSearch: { apiKey: "k" } });
-    expect(tools.map((t) => t.name)).toEqual(["web_fetch", "wiki_search", "web_search"]);
+    expect(tools.map((t) => t.name)).toEqual(["web_read", "wiki_search", "web_search"]);
     const wiki = tools[1];
     // options pass through — languages wired into the request URL
     expect(wiki).toBeDefined();

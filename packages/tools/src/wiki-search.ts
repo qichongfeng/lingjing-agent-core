@@ -48,7 +48,7 @@ export function createWikiSearchTool(opts: WikiSearchToolOptions = {}): Tool {
     description:
       "Search Wikipedia and return entries as JSON ([{title, url, snippet, lang}]). " +
       "Free, reliable, and multilingual — the first choice for concepts, " +
-      "definitions, and factual lookups; open a hit's url with web_fetch for detail.",
+      "definitions, and factual lookups; open a hit's url with web_read for detail.",
     inputSchema: {
       jsonSchema: {
         type: "object",

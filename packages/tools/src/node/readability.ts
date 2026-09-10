@@ -1,4 +1,4 @@
-// Node-only Readability extractor for web_fetch.
+// Node-only Readability extractor for web_read.
 //
 // The Firefox Reader Mode content-scoring algorithm (@mozilla/readability,
 // Apache-2.0): scores DOM nodes by text/link density, keeps the main article
@@ -13,10 +13,10 @@
 //
 // The extracted article HTML is converted to Markdown by the package's own
 // built-in converter, so link resolution and code fences behave identically
-// to the default web_fetch output.
+// to the default web_read output.
 
 import { htmlToMarkdown } from "../html-to-markdown.js";
-import type { HtmlExtractor } from "../web-fetch.js";
+import type { HtmlExtractor } from "../web-read.js";
 
 export interface ReadabilityExtractorOptions {
   /** Options passed through to Readability (charThreshold, classesToPreserve, …). */
@@ -24,9 +24,9 @@ export interface ReadabilityExtractorOptions {
 }
 
 /**
- * Build a Readability-based `extractor` for `createWebFetchTool({ extractor })`.
+ * Build a Readability-based `extractor` for `createWebReadTool({ extractor })`.
  * Declines (returns undefined) on pages with no article-shaped content —
- * web_fetch then falls back to the full-page built-in converter, so any URL
+ * web_read then falls back to the full-page built-in converter, so any URL
  * still yields content.
  */
 export function createReadabilityExtractor(opts: ReadabilityExtractorOptions = {}): HtmlExtractor {

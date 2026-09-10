@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { AbortError, type HttpTransport, type HttpTransportRequest, type HttpTransportResponse } from "@lingjing-agent/core";
-import { createWebFetchTool, htmlToMarkdown } from "../src/index.js";
+import { createWebReadTool, htmlToMarkdown } from "../src/index.js";
 
 function testCtx(signal?: AbortSignal) {
   return {
@@ -38,14 +38,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("createWebFetchTool", () => {
+describe("createWebReadTool", () => {
   it("distills HTML to readable text (scripts/styles dropped, entities decoded)", async () => {
     const html =
       "<!DOCTYPE html><html><head><style>.x{color:red}</style>" +
       "<script>alert('evil')</script></head>" +
       "<body><nav>Menu</nav><h1>Title &amp; More</h1><p>First&nbsp;para</p>" +
       "<p>Second</p><footer>Foot</footer></body></html>";
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: fakeTransport({ headers: { "content-type": "text/html; charset=utf-8" }, body: bodyOf(html) }),
     });
     const r = await tool.execute({ url: "https://example.com/page" }, testCtx());
@@ -60,7 +60,7 @@ describe("createWebFetchTool", () => {
   });
 
   it("returns plain-text bodies as-is", async () => {
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: fakeTransport({ headers: { "content-type": "text/plain" }, body: bodyOf("just some plain text") }),
     });
     const r = await tool.execute({ url: "https://example.com/robots.txt" }, testCtx());
@@ -68,7 +68,7 @@ describe("createWebFetchTool", () => {
   });
 
   it("truncates at maxBytes and says so", async () => {
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: fakeTransport({ body: bodyOf("x".repeat(1000), 10) }),
       maxBytes: 50,
     });
@@ -78,7 +78,7 @@ describe("createWebFetchTool", () => {
   });
 
   it("decodes multi-byte UTF-8 split across chunk boundaries", async () => {
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: fakeTransport({ body: bodyOf("灵境 agent", 1) }), // 1 byte per chunk — splits every code point
     });
     const r = await tool.execute({ url: "https://example.com/cn" }, testCtx());
@@ -87,7 +87,7 @@ describe("createWebFetchTool", () => {
 
   it("falls back to the manual decoder when TextDecoder is missing (mini-program engines)", async () => {
     vi.stubGlobal("TextDecoder", undefined);
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: fakeTransport({ body: bodyOf("emoji 🎉 and 中文", 3) }),
     });
     const r = await tool.execute({ url: "https://example.com/x" }, testCtx());
@@ -95,20 +95,20 @@ describe("createWebFetchTool", () => {
   });
 
   it("refuses non-http(s) protocols", async () => {
-    const tool = createWebFetchTool({ transport: fakeTransport({}) });
+    const tool = createWebReadTool({ transport: fakeTransport({}) });
     expect((await tool.execute({ url: "file:///etc/passwd" }, testCtx())).isError).toBe(true);
     expect((await tool.execute({ url: "ftp://example.com/x" }, testCtx())).isError).toBe(true);
     expect((await tool.execute({ url: "javascript:alert(1)" }, testCtx())).isError).toBe(true);
   });
 
   it("refuses invalid URLs and bad input", async () => {
-    const tool = createWebFetchTool({ transport: fakeTransport({}) });
+    const tool = createWebReadTool({ transport: fakeTransport({}) });
     expect((await tool.execute({ url: "not a url" }, testCtx())).isError).toBe(true);
     expect((await tool.execute({}, testCtx())).isError).toBe(true);
   });
 
   it("marks 4xx/5xx as isError but still returns the body", async () => {
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: fakeTransport({ status: 404, statusText: "Not Found", body: bodyOf("no such page") }),
     });
     const r = await tool.execute({ url: "https://example.com/missing" }, testCtx());
@@ -118,7 +118,7 @@ describe("createWebFetchTool", () => {
   });
 
   it("reports transport failures without throwing", async () => {
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: async () => {
         throw new Error("ECONNREFUSED");
       },
@@ -130,7 +130,7 @@ describe("createWebFetchTool", () => {
 
   it("maps transport AbortError to (aborted)", async () => {
     const ac = new AbortController();
-    const tool = createWebFetchTool({
+    const tool = createWebReadTool({
       transport: async () => {
         throw new AbortError();
       },
@@ -142,7 +142,7 @@ describe("createWebFetchTool", () => {
   });
 
   it("ships network permission + http tag", () => {
-    const tool = createWebFetchTool({});
+    const tool = createWebReadTool({});
     expect(tool.permissions?.network).toBe(true);
     expect(tool.permissions?.destructive).toBeFalsy();
     expect(tool.permissions?.tags).toEqual(["http"]);
@@ -203,7 +203,7 @@ describe("htmlToMarkdown", () => {
   });
 });
 
-describe("web_fetch cache + host headers", () => {
+describe("web_read cache + host headers", () => {
   function recorder(respFor: () => HttpTransportResponse): { t: HttpTransport; calls: number } {
     const state = { calls: 0 };
     return {
@@ -219,7 +219,7 @@ describe("web_fetch cache + host headers", () => {
 
   it("caches successful fetches per URL for the TTL (no second request)", async () => {
     const r = recorder(() => ({ status: 200, statusText: "OK", headers: {}, body: bodyOf("cached page") }));
-    const tool = createWebFetchTool({ transport: r.t, cacheTtlMs: 60_000 });
+    const tool = createWebReadTool({ transport: r.t, cacheTtlMs: 60_000 });
     const a = await tool.execute({ url: "https://example.com/same" }, testCtx());
     const b = await tool.execute({ url: "https://example.com/same" }, testCtx());
     expect(r.calls).toBe(1);
@@ -228,7 +228,7 @@ describe("web_fetch cache + host headers", () => {
 
   it("cacheTtlMs:0 disables caching", async () => {
     const r = recorder(() => ({ status: 200, statusText: "OK", headers: {}, body: bodyOf("page") }));
-    const tool = createWebFetchTool({ transport: r.t, cacheTtlMs: 0 });
+    const tool = createWebReadTool({ transport: r.t, cacheTtlMs: 0 });
     await tool.execute({ url: "https://example.com/same" }, testCtx());
     await tool.execute({ url: "https://example.com/same" }, testCtx());
     expect(r.calls).toBe(2);
@@ -237,7 +237,7 @@ describe("web_fetch cache + host headers", () => {
   it("errors are not cached", async () => {
     let status = 500;
     const r = recorder(() => ({ status, statusText: "Boom", headers: {}, body: bodyOf("oops") }));
-    const tool = createWebFetchTool({ transport: r.t });
+    const tool = createWebReadTool({ transport: r.t });
     await tool.execute({ url: "https://example.com/flaky" }, testCtx());
     status = 200;
     const ok = await tool.execute({ url: "https://example.com/flaky" }, testCtx());
@@ -251,7 +251,7 @@ describe("web_fetch cache + host headers", () => {
       reqs.push(req);
       return { status: 200, statusText: "OK", headers: {}, body: bodyOf("x") };
     };
-    const tool = createWebFetchTool({ transport: t, headers: { "user-agent": "Mozilla/5.0 (host decided)" } });
+    const tool = createWebReadTool({ transport: t, headers: { "user-agent": "Mozilla/5.0 (host decided)" } });
     await tool.execute({ url: "https://example.com/ua" }, testCtx());
     expect(reqs[0]?.headers["user-agent"]).toBe("Mozilla/5.0 (host decided)");
   });

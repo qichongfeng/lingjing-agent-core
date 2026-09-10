@@ -9,12 +9,12 @@
 // enters your bundle.
 //
 // The reliable-first web toolbox: wiki_search / news_search (keyless) and
-// web_search (host-keyed) for discovery, and web_fetch — the universal URL
+// web_search (host-keyed) for discovery, and web_read — the universal URL
 // reader that auto-dispatches JSON / RSS·Atom / HTML by what the server
 // returns. parseFeed / htmlToMarkdown are exported for direct use.
 
-export { createWebFetchTool } from "./web-fetch.js";
-export type { WebFetchToolOptions, HtmlExtractor } from "./web-fetch.js";
+export { createWebReadTool } from "./web-read.js";
+export type { WebReadToolOptions, HtmlExtractor } from "./web-read.js";
 export { createWebSearchTool } from "./web-search.js";
 export type { WebSearchToolOptions, WebSearchEngine, WebSearchResult } from "./web-search.js";
 export { createWikiSearchTool } from "./wiki-search.js";

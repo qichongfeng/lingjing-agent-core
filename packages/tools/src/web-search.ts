@@ -3,7 +3,7 @@
 //
 // Search is the reliable answer to "the model needs to know something
 // current": snippets are server-rendered by the provider, immune to the SPA
-// and anti-bot failures that make direct page fetches (web_fetch) unreliable
+// and anti-bot failures that make direct page reads (web_read) unreliable
 // — and often answer the question without fetching anything at all.
 //
 // The API key is HOST-owned configuration (opts.apiKey), exactly like OAuth
