@@ -11,8 +11,12 @@
 // The reliable-first web toolbox: wiki_search (keyless) and web_search
 // (host-keyed) for discovery, and web_read — the universal URL reader that
 // auto-dispatches JSON / RSS·Atom / HTML by what the server returns.
-// parseFeed / htmlToMarkdown are exported for direct use.
+// parseFeed / htmlToMarkdown are exported for direct use. One non-web tool
+// also lives here: ask_user (human-in-the-loop clarification, host-injected
+// handler) — universal by construction, it needs no transport at all.
 
+export { createAskUserTool } from "./ask-user.js";
+export type { AskUserToolOptions, AskUserQuestion, AskUserOption, AskUserHandler } from "./ask-user.js";
 export { createWebReadTool } from "./web-read.js";
 export type { WebReadToolOptions, HtmlExtractor, UrlForward } from "./web-read.js";
 export { createWebSearchTool } from "./web-search.js";

@@ -6,7 +6,7 @@ Built-in tools for [`@lingjing-agent/core`](https://www.npmjs.com/package/@lingj
 
 | Entry | Runtime | Contents |
 | --- | --- | --- |
-| `@lingjing-agent/tools` | **Node / browser / Edge / mini-program** | `createWebTools()` → `web_read` (universal reader) · `wiki_search` (+ keyed `web_search`) — zero `node:*` imports, network only through core's `HttpTransport` |
+| `@lingjing-agent/tools` | **Node / browser / Edge / mini-program** | `createWebTools()` → `web_read` (universal reader) · `wiki_search` (+ keyed `web_search`) · `createAskUserTool()` (human-in-the-loop) — zero `node:*` imports, network only through core's `HttpTransport` |
 | `@lingjing-agent/tools/node` | **Node / Electron / Tauri-main only** | `fs` (path-confined) · hardened `shell` · `glob` · `grep` · Readability extractor |
 
 The platform split is the package's internal structure, not your problem: import the main entry anywhere; import `./node` only from Node-side code (that import is the single point where platform-specific code enters your bundle).
@@ -49,6 +49,28 @@ A plain HTTP GET against today's web fails more often than it succeeds: JS-rende
 | `web_read` | universal URL GET — JSON / feeds / HTML auto-dispatch | ★★★ JSON·feed / ★☆☆ HTML (static pages only) |
 
 Every tool ships with `permissions.network: true` (hosts can gate) and tags for `allowedToolTags` matching.
+
+## ask_user — human-in-the-loop clarification
+
+The one tool that is not about the web: the model asks the user ONE clarifying question when it is genuinely blocked, and the run blocks until they answer.
+
+```ts
+import { createAskUserTool } from "@lingjing-agent/tools";
+
+createAskUserTool({
+  handler: async (q, signal) => {
+    // render q.question (+ q.options as clickable choices, q.allowMultiple)
+    // resolve with the user's answer string; honor `signal` — an aborted
+    // signal means the run is over, stop waiting and drop the UI
+    return answer;
+  },
+})
+```
+
+- Schema: `question` (one thing, in the user's language) + optional `options[]` (1–4 `{label, description?}`) + `allowMultiple`. The handler owns the whole UX — rendering, joining a multi-select, mapping a dismiss to an empty string; the tool returns the resolved string verbatim (trimmed, 4 000-char cap).
+- Waiting for a human is slow: the default timeout is **10 minutes** (`timeoutMs`), the largest in the family. On timeout the loop reports it as a tool error and the model proceeds on its own judgment (the description tells it to).
+- Abort-safe: `execute` never throws; an aborted run surfaces as `(aborted)`. `permissions: { tags: ["ask"] }` — no network, nothing destructive.
+- Not part of `createWebTools` — a standalone factory the host wires explicitly (it is useless without a handler anyway).
 
 ## wiki_search — keyless search
 
