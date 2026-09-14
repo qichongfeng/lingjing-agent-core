@@ -90,6 +90,35 @@ describe("fetchTransport", () => {
     ).rejects.toThrow("network failed");
   });
 
+  it("throws a diagnosable error when a wrapped fetch resolves undefined", async () => {
+    // Seen in the wild: a Chromium-derivative browser's proxy/acceleration layer
+    // resolved `undefined` for a fetch it silently dropped (CORS-blocked) instead
+    // of rejecting — the raw crash was "reading 'headers' of undefined".
+    const transport = fetchTransport(async () => undefined as unknown as Response);
+    await expect(
+      transport({
+        url: "https://example.test/wrapped",
+        method: "GET",
+        headers: {},
+        signal: NO_SIGNAL(),
+      }),
+    ).rejects.toThrow(
+      /fetch for https:\/\/example\.test\/wrapped resolved undefined instead of a Response/,
+    );
+  });
+
+  it("throws a diagnosable error when fetch resolves a non-Response object", async () => {
+    const transport = fetchTransport(async () => ({}) as unknown as Response);
+    await expect(
+      transport({
+        url: "https://example.test/malformed",
+        method: "GET",
+        headers: {},
+        signal: NO_SIGNAL(),
+      }),
+    ).rejects.toThrow(/resolved a non-Response object instead of a Response/);
+  });
+
   it("surfaces a fetch abort as a thrown error (signal threaded through)", async () => {
     const transport = fetchTransport(async (_url, init) => {
       return new Promise<Response>((_resolve, reject) => {

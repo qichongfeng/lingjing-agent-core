@@ -1,13 +1,18 @@
 import { describe, expect, test } from "vitest";
 import {
+  AbortError,
+  conversationUsage,
   createAgent,
+  extractText,
+  type AgentEvent,
   type ContextManager,
+  type LLMProvider,
   type MemoryStore,
   type Message,
   type StreamHandle,
   type Tool,
 } from "../src/index.js";
-import { FakeProvider, scriptedProvider, textTurn, toolCallTurn } from "./helpers/index.js";
+import { FakeProvider, scriptedProvider, slowTool, textTurn, toolCallTurn } from "./helpers/index.js";
 
 /** A MemoryStore that records every append() call, for asserting what got persisted. */
 function recordingStore(): { store: MemoryStore; appended: Message[][]; data: Map<string, Message[]> } {
@@ -168,5 +173,117 @@ describe("agent config validation", () => {
   test("createAgent rejects maxTurns < 1 at construction", () => {
     expect(() => createAgent({ provider: scriptedProvider([]), model: "fake", maxTurns: 0 })).toThrow(/maxTurns/);
     expect(() => createAgent({ provider: scriptedProvider([]), model: "fake", maxTurns: -1 })).toThrow(/maxTurns/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Abort persistence (Claude parity): an interrupted run keeps what it really
+// produced — the input, completed turns, and any partial reply that had
+// already streamed — instead of losing the whole run.
+// ---------------------------------------------------------------------------
+
+/** Streams `text`, reports usage mid-stream, then hangs until the request is
+ *  aborted — mimics a real provider whose transport dies on abort. */
+function hangAfterTextProvider(text: string): LLMProvider {
+  return {
+    id: "fake",
+    capabilities: { stopReasons: ["end_turn"], streaming: true },
+    stream(req) {
+      return (async function* () {
+        yield { type: "message_start", messageId: "m_hang", model: "fake" };
+        if (text !== "") yield { type: "text_delta", text };
+        yield { type: "message_delta", usage: { inputTokens: 3, outputTokens: 4 } };
+        await new Promise<never>((_, reject) => {
+          req.signal.addEventListener("abort", () => reject(new AbortError()), { once: true });
+        });
+      })();
+    },
+  };
+}
+
+/** Drain events, aborting the handle as soon as an event matches `when`. */
+async function drainWithAbort(
+  handle: StreamHandle,
+  when: (e: AgentEvent) => boolean,
+): Promise<AgentEvent[]> {
+  const events: AgentEvent[] = [];
+  for await (const e of handle.events) {
+    events.push(e);
+    if (when(e)) handle.abort();
+  }
+  return events;
+}
+
+describe("abort persistence (Claude parity)", () => {
+  test("abort mid-stream persists the salvaged partial reply + partial usage", async () => {
+    const { store, data } = recordingStore();
+    const agent = createAgent({ provider: hangAfterTextProvider("partial answer"), model: "fake", memory: store });
+    const handle = agent.stream("q", { conversationId: "c1" });
+    const events = await drainWithAbort(handle, (e) => e.type === "text_delta");
+    await handle.done.catch(() => {}); // hard failure: done rejects AbortError by contract
+
+    const err = events.find((e): e is Extract<AgentEvent, { type: "error" }> => e.type === "error");
+    expect(err?.code).toBe("aborted");
+    expect(events.some((e) => e.type === "done")).toBe(false);
+
+    const persisted = data.get("c1") ?? [];
+    expect(persisted.map((m) => m.role)).toEqual(["user", "assistant"]);
+    const partial = persisted[1]!;
+    expect(extractText(partial)).toBe("partial answer");
+    expect(partial.metadata?.stopReason).toBe("aborted");
+    expect(partial.metadata?.usage).toEqual({ inputTokens: 3, outputTokens: 4 });
+  });
+
+  test("abort before any content persists only the input (no empty assistant turn)", async () => {
+    const { store, data } = recordingStore();
+    const agent = createAgent({ provider: hangAfterTextProvider(""), model: "fake", memory: store });
+    const handle = agent.stream("q", { conversationId: "c1" });
+    await drainWithAbort(handle, (e) => e.type === "start");
+    await handle.done.catch(() => {});
+    expect((data.get("c1") ?? []).map((m) => m.role)).toEqual(["user"]);
+  });
+
+  test("abort during tool execution persists the tool turn + its (error) result", async () => {
+    const { store, data } = recordingStore();
+    const agent = createAgent({
+      provider: scriptedProvider([toolCallTurn("slow", {})]),
+      model: "fake",
+      tools: [slowTool(10_000)],
+      memory: store,
+    });
+    const handle = agent.stream("q", { conversationId: "c1" });
+    await drainWithAbort(handle, (e) => e.type === "tool_call");
+    await handle.done.catch(() => {});
+
+    const persisted = data.get("c1") ?? [];
+    // user input + assistant(tool_call) + user(tool_result carrier) — replay-safe:
+    // every tool_use the next request replays carries its tool_result answer.
+    expect(persisted.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+    const carrier = persisted[2]!;
+    const results = Array.isArray(carrier.content) ? carrier.content : [];
+    expect(results[0]).toMatchObject({ type: "tool_result", isError: true });
+  });
+});
+
+describe("per-turn usage persistence", () => {
+  test("usage + stopReason stamped on every assistant turn; conversationUsage totals them", async () => {
+    const { store, data } = recordingStore();
+    const agent = createAgent({
+      provider: scriptedProvider([textTurn("one"), textTurn("two")]),
+      model: "fake",
+      memory: store,
+    });
+    await drain(agent.stream("first", { conversationId: "c1" }));
+    await drain(agent.stream("second", { conversationId: "c1" }));
+
+    const assistants = (data.get("c1") ?? []).filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(2);
+    for (const a of assistants) {
+      expect(a.metadata?.usage).toEqual({ inputTokens: 1, outputTokens: 1 });
+      expect(a.metadata?.stopReason).toBe("end_turn");
+    }
+    // Conversation total from persisted history — derivable after a reload,
+    // without having watched the live done.totalUsage event.
+    expect(conversationUsage(data.get("c1") ?? [])).toEqual({ inputTokens: 2, outputTokens: 2 });
   });
 });

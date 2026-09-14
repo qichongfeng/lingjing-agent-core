@@ -19,7 +19,7 @@ import type {
 import { validateJsonSchema } from "./schema.js";
 import type { Tool, ToolCallContext } from "./tool.js";
 import type { Content, Message, TextContent, ToolCall, ToolResult } from "./types.js";
-import { extractText, randomId, userMessage, withRunId } from "./types.js";
+import { extractText, randomId, userMessage, withRunId, withTurnMeta } from "./types.js";
 import { AbortError, anySignal, detectRuntime, sleep, TimeoutError } from "./abort.js";
 
 export interface LoopOptions {
@@ -137,9 +137,13 @@ export async function runLoop(opts: LoopOptions): Promise<Message> {
       // to the caller, resolved by handle.done, and handed to afterResponse —
       // identity between them is load-bearing (hosts locate the turn via
       // indexOf/===), so never push a copy while returning the original.
-      message = withRunId(message, runId);
+      // usage/stopReason ride along so per-turn stats survive persistence.
+      message = withRunId(withTurnMeta(message, usage, stopReason), runId);
       // context_window_exceeded is a compaction signal, not a real reply — don't
       // push the (empty) assistant into history, else memory.append would persist it.
+      // An aborted turn's partial is pushed only when it actually streamed
+      // content (consumeStream never salvages an empty buffer) — Claude-parity:
+      // an interrupted reply that already said something stays in history.
       if (stopReason !== "context_window_exceeded") messages.push(message);
       lastAssistant = message;
       totalUsage = addUsage(totalUsage, usage);
@@ -170,6 +174,13 @@ export async function runLoop(opts: LoopOptions): Promise<Message> {
           });
           emit({ type: "done", conversationId, turn, ts: now(), finalText: extractText(message), totalUsage, turns: turn });
           return message;
+        }
+        case "aborted": {
+          // Salvaged partial turn (see consumeStream). It is already pushed into
+          // history above; terminate exactly like a hard abort — error event +
+          // throw — so the abort contract is unchanged for consumers. What's new
+          // is that streamInto still persists everything the run really produced.
+          throw new AbortError();
         }
         case "tool_use": {
           await executeTools(message, opts, turn);
@@ -323,48 +334,85 @@ async function consumeStream(
   let usage: TokenUsage = emptyUsage();
   let firstChunkSeen = false;
 
-  for await (const chunk of iter) {
-    if (signal.aborted) throw new AbortError();
-    if (!firstChunkSeen) {
-      firstChunkSeen = true;
-      markStarted();
-    }
-    switch (chunk.type) {
-      case "message_start":
-        messageId = chunk.messageId;
-        break;
-      case "text_delta":
-        textBuf += chunk.text;
-        emit({ type: "text_delta", conversationId, turn, ts: now(), text: chunk.text });
-        break;
-      case "thinking_delta":
-        if (thinkingStart === undefined) thinkingStart = now();
-        thinkingBuf += chunk.text;
-        emit({ type: "thinking_delta", conversationId, turn, ts: now(), text: chunk.text });
-        break;
-      case "thinking_end":
-        if (chunk.signature) thinkingSignature = chunk.signature;
-        if (thinkingStart !== undefined) thinkingMs = now() - thinkingStart;
-        break;
-      case "tool_call_start":
-        toolCalls.push({ type: "tool_call", id: chunk.toolCallId, name: chunk.name, inputJson: "" });
-        break;
-      case "tool_call_delta": {
-        const tc = toolCalls.find((t) => t.id === chunk.toolCallId);
-        if (tc) tc.inputJson += chunk.inputJsonDelta;
-        break;
+  try {
+    for await (const chunk of iter) {
+      if (!firstChunkSeen) {
+        firstChunkSeen = true;
+        markStarted();
       }
-      case "tool_call_end":
-        break;
-      case "message_delta":
-        if (chunk.stopReason) stopReason = chunk.stopReason;
-        if (chunk.usage) usage = mergeUsage(usage, chunk.usage);
-        break;
-      case "message_end":
-        stopReason = chunk.stopReason;
-        usage = chunk.usage;
-        break;
+      // Process an already-delivered chunk BEFORE honoring abort — a chunk the
+      // provider already sent is real data (a trailing usage-bearing
+      // message_delta matters to the salvaged partial), and dropping it makes
+      // the salvage content depend on microtask ordering.
+      switch (chunk.type) {
+        case "message_start":
+          messageId = chunk.messageId;
+          break;
+        case "text_delta":
+          textBuf += chunk.text;
+          emit({ type: "text_delta", conversationId, turn, ts: now(), text: chunk.text });
+          break;
+        case "thinking_delta":
+          if (thinkingStart === undefined) thinkingStart = now();
+          thinkingBuf += chunk.text;
+          emit({ type: "thinking_delta", conversationId, turn, ts: now(), text: chunk.text });
+          break;
+        case "thinking_end":
+          if (chunk.signature) thinkingSignature = chunk.signature;
+          if (thinkingStart !== undefined) thinkingMs = now() - thinkingStart;
+          break;
+        case "tool_call_start":
+          toolCalls.push({ type: "tool_call", id: chunk.toolCallId, name: chunk.name, inputJson: "" });
+          break;
+        case "tool_call_delta": {
+          const tc = toolCalls.find((t) => t.id === chunk.toolCallId);
+          if (tc) tc.inputJson += chunk.inputJsonDelta;
+          break;
+        }
+        case "tool_call_end":
+          break;
+        case "message_delta":
+          if (chunk.stopReason) stopReason = chunk.stopReason;
+          if (chunk.usage) usage = mergeUsage(usage, chunk.usage);
+          break;
+        case "message_end":
+          stopReason = chunk.stopReason;
+          usage = chunk.usage;
+          break;
+      }
+      if (signal.aborted) throw new AbortError();
     }
+  } catch (err) {
+    // Claude-parity salvage on abort: content that already reached the consumer
+    // is REAL — keep it as a partial assistant turn instead of dropping it.
+    // Text/thinking only: a partially-streamed tool_call must NOT survive,
+    // because replaying a tool_use without its tool_result is a protocol
+    // violation on Anthropic-class APIs (and its input JSON may not even parse).
+    // Usage keeps whatever message_delta reported before the interruption.
+    // Nothing streamed → nothing to salvage → propagate unchanged.
+    if (signal.aborted && (textBuf !== "" || thinkingBuf !== "")) {
+      const content: Content[] = [];
+      if (thinkingBuf) {
+        content.push({
+          type: "thinking",
+          text: thinkingBuf,
+          ...(thinkingSignature ? { signature: thinkingSignature } : {}),
+          ...(thinkingMs !== undefined ? { ms: thinkingMs } : {}),
+        });
+      }
+      if (textBuf) content.push({ type: "text", text: textBuf });
+      return {
+        message: {
+          id: messageId || randomId(),
+          role: "assistant",
+          content,
+          createdAt: now(),
+        },
+        stopReason: "aborted",
+        usage,
+      };
+    }
+    throw err;
   }
 
   // Parse tool call inputs (JSON.parse; never string-match).
@@ -620,6 +668,23 @@ function mergeUsage(base: TokenUsage, partial: Partial<TokenUsage>): TokenUsage 
   if (partial.cacheWriteTokens !== undefined) out.cacheWriteTokens = partial.cacheWriteTokens;
   if (partial.reasoningTokens !== undefined) out.reasoningTokens = partial.reasoningTokens;
   return out;
+}
+
+/**
+ * Sum the per-turn usage the loop stamps onto assistant messages
+ * (`metadata.usage`). Hosts get the conversation's token total from persisted
+ * history — after a reload, or across many sessions — without having watched
+ * the live `done` event. Live totals remain available as `done.totalUsage`.
+ */
+export function conversationUsage(messages: readonly Message[]): TokenUsage {
+  let total = emptyUsage();
+  for (const m of messages) {
+    const u = m.metadata?.usage;
+    if (u !== undefined && u !== null && typeof u === "object") {
+      total = addUsage(total, u as TokenUsage);
+    }
+  }
+  return total;
 }
 
 function isRetryable(err: unknown): boolean {

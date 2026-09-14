@@ -13,7 +13,8 @@ export type StopReason =
   | "stop_sequence" // hit a stop sequence → terminate
   | "pause_turn" // server-side tool iteration cap → re-send to resume
   | "refusal" // safety refusal → terminate, surface stop_details via providerOptions
-  | "context_window_exceeded"; // history too long → compact + retry once
+  | "context_window_exceeded" // history too long → compact + retry once
+  | "aborted"; // loop-produced only: the run was interrupted mid-stream (providers never emit this)
 
 export interface TokenUsage {
   inputTokens: number;

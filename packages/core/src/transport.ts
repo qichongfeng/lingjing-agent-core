@@ -64,6 +64,20 @@ export function fetchTransport(fetchImpl?: typeof fetch): HttpTransport {
     };
     if (req.body !== undefined) init.body = req.body;
     const res = await f(req.url, init);
+    // A conforming fetch RESOLVES a Response for every request it completes and
+    // REJECTS otherwise. Wrappers that break this contract exist in the wild —
+    // some browsers' proxy/acceleration features and extensions resolve
+    // `undefined` for requests they silently dropped (observed on a CORS-blocked
+    // fetch in a Chromium derivative). Crash there reads as an opaque
+    // "Cannot read properties of undefined (reading 'headers')" from deep inside
+    // the agent; say what actually happened instead.
+    if (!isResponseLike(res)) {
+      throw new Error(
+        `fetch for ${req.url} resolved ${res === undefined ? "undefined" : res === null ? "null" : "a non-Response object"} ` +
+          "instead of a Response — the runtime's fetch is wrapped or broken " +
+          "(browser extension, proxy/acceleration feature, polyfill?) and swallowed the failure",
+      );
+    }
     const headers: Record<string, string> = {};
     res.headers.forEach((value, key) => {
       headers[key.toLowerCase()] = value;
@@ -101,4 +115,12 @@ async function* readableStreamToAsyncIterable(
 /** Yields nothing — used for null bodies (204/205/304). */
 async function* emptyAsyncIterable(): AsyncIterable<Uint8Array> {
   // intentionally empty
+}
+
+/** Minimum Response shape fetchTransport dereferences (headers.forEach + status). */
+function isResponseLike(res: unknown): res is Response {
+  return (
+    typeof res === "object" && res !== null &&
+    typeof (res as { headers?: { forEach?: unknown } }).headers?.forEach === "function"
+  );
 }

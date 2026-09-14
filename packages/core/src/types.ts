@@ -2,6 +2,8 @@
 // Deliberately avoids vendor field names (no `tool_use_id`, `input_schema`, `cache_control`).
 // Adapters translate between this and vendor shapes.
 
+import type { StopReason, TokenUsage } from "./provider.js";
+
 export type Role = "system" | "user" | "assistant";
 
 export interface TextContent {
@@ -89,6 +91,17 @@ export function userMessage(
  */
 export function withRunId(m: Message, runId: string): Message {
   return { ...m, metadata: { ...m.metadata, runId } };
+}
+
+/**
+ * Return a copy of `m` stamped with the turn's provider-reported usage and
+ * stop reason (`metadata.usage` / `metadata.stopReason`). The loop stamps every
+ * assistant turn it persists so a conversation's token totals — and how each
+ * turn ended, e.g. `aborted` — survive reloads (see `conversationUsage()`).
+ * Copy-on-write, same contract as `withRunId`.
+ */
+export function withTurnMeta(m: Message, usage: TokenUsage, stopReason: StopReason): Message {
+  return { ...m, metadata: { ...m.metadata, usage, stopReason } };
 }
 
 export function randomId(): string {

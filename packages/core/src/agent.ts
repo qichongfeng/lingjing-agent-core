@@ -170,6 +170,17 @@ export function createAgent(config: AgentConfig): Agent {
         queue.close();
         return finalMsg;
       } catch (err) {
+        // Claude parity on interruption: a run that produced REAL content — the
+        // input, completed turns (incl. tool results), and the loop's salvaged
+        // partial reply — keeps it. Persist what this stream added before
+        // rethrowing; best-effort, because a persistence failure here must not
+        // mask the original error.
+        try {
+          const newMsgs = history.filter((m) => !loadedIds.has(m.id));
+          if (newMsgs.length > 0) await memory.append(conversationId, newMsgs);
+        } catch {
+          /* keep the original failure */
+        }
         // runLoop already emitted an `error` event on the hard-failure path.
         queue.close();
         throw err instanceof Error ? err : new Error(String(err));

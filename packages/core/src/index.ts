@@ -11,6 +11,7 @@ export type {
   Message,
 } from "./types.js";
 export { userMessage, randomId, extractText } from "./types.js";
+export { conversationUsage } from "./loop.js";
 
 export type { Exchange, ExchangeStep, ToolPairStep } from "./exchange.js";
 export { groupExchanges } from "./exchange.js";
