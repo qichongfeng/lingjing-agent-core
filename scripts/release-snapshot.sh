@@ -79,7 +79,19 @@ pnpm -r test > /dev/null 2>&1 || { echo '测试失败,已中止发版(版本号�
 # 4. 发布
 echo '==> 发布'
 # --access public:scoped 包首发默认 restricted,tools/mcp 首发必须显式 public(已 public 的包不受影响)
-pnpm --filter @lingjing-agent/core --filter @lingjing-agent/provider-openai --filter @lingjing-agent/provider-anthropic --filter @lingjing-agent/tools --filter @lingjing-agent/mcp publish --no-git-checks --access public
+# --tag latest:prerelease 版本 npm 要求显式 tag(否则个别包被拒)
+pnpm --filter @lingjing-agent/core --filter @lingjing-agent/provider-openai --filter @lingjing-agent/provider-anthropic --filter @lingjing-agent/tools --filter @lingjing-agent/mcp publish --no-git-checks --access public --tag latest
+
+# 4b. 发版后校验:递归 publish 会静默跳过失败的包(2026-09-14 实际发生过),逐包确认
+#     registry latest == NEXT 再往下走;对不上就停在 commit 之前(版本号未落 git,排查后重跑)
+echo '==> 校验 registry'
+for p in core provider-openai provider-anthropic tools mcp; do
+	PUBLISHED=$(npm view "@lingjing-agent/$p" dist-tags.latest 2>/dev/null)
+	if [ "$PUBLISHED" != "$NEXT" ]; then
+		echo "❌ @lingjing-agent/$p registry latest = ${PUBLISHED:-未查到},期望 $NEXT —— 该包没发上去,中止(若确认是 registry 读滞后,稍后重跑本校验即可)"
+		exit 1
+	fi
+done
 
 # 5. 提交版本变更
 git add packages pnpm-lock.yaml
@@ -90,7 +102,14 @@ if [ -d "$TOOLX_DIR" ]; then
 	echo '==> 更新 tooolx-prompt'
 	cd "$TOOLX_DIR"
 	pnpm remove @lingjing-agent/core @lingjing-agent/provider-openai @lingjing-agent/tools > /dev/null 2>&1 || true
-	pnpm add "@lingjing-agent/core@$NEXT" "@lingjing-agent/provider-openai@$NEXT" "@lingjing-agent/tools@$NEXT" > /dev/null
+	# registry 读滞后会让 add 解析不到新版本(tooolx 侧已发生过):失败重试一次,仍失败则醒目报告
+	pnpm add "@lingjing-agent/core@$NEXT" "@lingjing-agent/provider-openai@$NEXT" "@lingjing-agent/tools@$NEXT" > /dev/null 2>&1 \
+		|| { sleep 30 && pnpm add "@lingjing-agent/core@$NEXT" "@lingjing-agent/provider-openai@$NEXT" "@lingjing-agent/tools@$NEXT" > /dev/null; } \
+		|| { echo "❌ tooolx 依赖没装上(registry 滞后或缓存),手动执行:cd $TOOLX_DIR && pnpm add @lingjing-agent/core@$NEXT @lingjing-agent/provider-openai@$NEXT @lingjing-agent/tools@$NEXT"; exit 1; }
+	if ! grep -q "\"@lingjing-agent/tools\": \"$NEXT\"" package.json; then
+		echo "❌ tooolx package.json 未写入 $NEXT 引用,手动检查 $TOOLX_DIR/package.json"
+		exit 1
+	fi
 	echo "    已更新到 $NEXT"
 fi
 
