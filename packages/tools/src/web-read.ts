@@ -38,9 +38,37 @@ const MAX_FEED_LIMIT = 50;
  */
 export type HtmlExtractor = (html: string, url: string) => string | undefined | Promise<string | undefined>;
 
+/**
+ * Route reads through a forwarding endpoint instead of the target host — for
+ * BROWSER hosts, where direct fetch is capped by CORS and network reachability
+ * (curl works, the browser doesn't); a server-side reader has neither limit.
+ *
+ * Two forms:
+ *  - template string with `{url}` (target URL verbatim) and/or `{urlEncoded}`
+ *    (encodeURIComponent) placeholders; a string with NO placeholder is a
+ *    prefix the target URL is appended to
+ *  - a function `(url) => fetchUrl` for anything else (signing, per-host routing)
+ *
+ * Examples — own same-origin route (most reliable, relative URL resolves
+ * against the page): `"/api/web-read?url={urlEncoded}"`; Jina Reader (free
+ * tier needs an API key via headers — anonymous access is rate-limited and
+ * datacenter IPs are blocked): `"https://r.jina.ai/{url}"`.
+ *
+ * The target URL — never the forwarder's — is what's scheme-gated, shown to
+ * the model, and used as the cache key, and HTML links resolve against it;
+ * forwarding is invisible to the model. Note every read URL is disclosed to
+ * the forwarding service — a host policy decision, which is why the library
+ * ships no default forwarder. Hosts needing richer behavior (direct first,
+ * forward on failure) can wrap a custom `transport` instead.
+ */
+export type UrlForward = string | ((url: string) => string);
+
 export interface WebReadToolOptions {
   /** Custom transport (e.g. mini-program wx.request bridge). Default fetchTransport(). */
   transport?: HttpTransport;
+  /** Route every read through this forwarding endpoint (browser hosts defeat
+   *  CORS/reachability limits; see UrlForward). Off by default. */
+  forward?: UrlForward;
   /** Max bytes read from the response body. Default 128 KiB. */
   maxBytes?: number;
   /** Tool-level timeout — also caps the whole body read. Default 30_000 ms. */
@@ -65,6 +93,7 @@ interface CacheEntry {
 
 export function createWebReadTool(opts: WebReadToolOptions = {}): Tool {
   const transport = opts.transport ?? fetchTransport();
+  const forward = opts.forward;
   const maxBytes = opts.maxBytes ?? 128 * 1024;
   const timeoutMs = opts.timeoutMs ?? 30_000;
   const allowedProtocols = new Set(opts.allowedProtocols ?? ["http:", "https:"]);
@@ -112,7 +141,7 @@ export function createWebReadTool(opts: WebReadToolOptions = {}): Tool {
 
       let resp;
       try {
-        resp = await transportGet(transport, url, {
+        resp = await transportGet(transport, forward !== undefined ? applyForward(forward, url) : url, {
           accept:
             "text/html,application/xhtml+xml,application/json," +
             "application/rss+xml,application/atom+xml,text/plain;q=0.9,*/*;q=0.7",
@@ -231,4 +260,14 @@ export function createWebReadTool(opts: WebReadToolOptions = {}): Tool {
 
 function clampFeedLimit(n: number): number {
   return Math.max(1, Math.min(MAX_FEED_LIMIT, n));
+}
+
+/** Resolve the URL actually fetched for a target (see UrlForward). */
+function applyForward(forward: UrlForward, url: string): string {
+  if (typeof forward === "function") return forward(url);
+  if (!forward.includes("{url")) {
+    // no placeholder → plain prefix (Jina-style `https://r.jina.ai/` + url)
+    return forward.endsWith("/") ? forward + url : `${forward}/${url}`;
+  }
+  return forward.replace(/\{urlEncoded\}/g, encodeURIComponent(url)).replace(/\{url\}/g, url);
 }

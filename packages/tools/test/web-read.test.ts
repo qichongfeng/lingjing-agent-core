@@ -149,6 +149,67 @@ describe("createWebReadTool", () => {
   });
 });
 
+describe("web_read forward (URL 转发)", () => {
+  function recordingTransport(): { t: HttpTransport; reqs: HttpTransportRequest[] } {
+    const reqs: HttpTransportRequest[] = [];
+    return {
+      reqs,
+      t: async (req) => {
+        reqs.push(req);
+        return { status: 200, statusText: "OK", headers: { "content-type": "text/plain" }, body: bodyOf("proxied body") };
+      },
+    };
+  }
+  const target = "https://wttr.in/Beijing?format=j1";
+
+  it("template with {urlEncoded} puts the encoded target in the query", async () => {
+    const r = recordingTransport();
+    const tool = createWebReadTool({ transport: r.t, forward: "/api/web-read?url={urlEncoded}" });
+    const out = await tool.execute({ url: target }, testCtx());
+    expect(r.reqs[0]?.url).toBe(`/api/web-read?url=${encodeURIComponent(target)}`);
+    expect(out.isError).toBeFalsy();
+  });
+
+  it("template with {url} keeps the target verbatim (Jina-style)", async () => {
+    const r = recordingTransport();
+    const tool = createWebReadTool({ transport: r.t, forward: "https://r.jina.ai/{url}" });
+    await tool.execute({ url: target }, testCtx());
+    expect(r.reqs[0]?.url).toBe(`https://r.jina.ai/${target}`);
+  });
+
+  it("a placeholder-free string is a prefix the target is appended to", async () => {
+    const r = recordingTransport();
+    const tool = createWebReadTool({ transport: r.t, forward: "https://r.jina.ai/" });
+    await tool.execute({ url: target }, testCtx());
+    expect(r.reqs[0]?.url).toBe(`https://r.jina.ai/${target}`);
+  });
+
+  it("function form gets the target URL and returns the fetch URL", async () => {
+    const r = recordingTransport();
+    const tool = createWebReadTool({ transport: r.t, forward: (u) => `https://relay.example/?raw=${btoa(u)}` });
+    await tool.execute({ url: target }, testCtx());
+    expect(r.reqs[0]?.url).toBe(`https://relay.example/?raw=${btoa(target)}`);
+  });
+
+  it("is invisible to the model: output + cache key + link resolution stay on the target URL", async () => {
+    const r = recordingTransport();
+    const tool = createWebReadTool({ transport: r.t, forward: "/api/read?url={urlEncoded}", cacheTtlMs: 60_000 });
+    const out = await tool.execute({ url: target }, testCtx());
+    expect(out.content).toContain(`url: ${target}`); // target, not the forwarder
+    expect(out.content).not.toContain("/api/read"); // forwarder never surfaces
+    await tool.execute({ url: target }, testCtx()); // cached per TARGET url → no 2nd request
+    await tool.execute({ url: "https://other.example/x" }, testCtx()); // different target → new request
+    expect(r.reqs).toHaveLength(2);
+  });
+
+  it("the scheme gate still applies to the target, forwarder or not", async () => {
+    const r = recordingTransport();
+    const tool = createWebReadTool({ transport: r.t, forward: "/api/read?url={urlEncoded}" });
+    expect((await tool.execute({ url: "file:///etc/passwd" }, testCtx())).isError).toBe(true);
+    expect(r.reqs).toHaveLength(0); // refused before any request went out
+  });
+});
+
 describe("htmlToMarkdown", () => {
   it("keeps <pre>/<li> structure: list markers + fenced code", () => {
     const out = htmlToMarkdown("<ul><li>one</li><li>two</li></ul><pre>code\nblock</pre>");
