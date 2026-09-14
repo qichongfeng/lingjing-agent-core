@@ -5,7 +5,7 @@
 # 发版纪律:提交≠发版。core 的 main 可领先 registry;只在 tooolx 要用新能力 /
 # 一个主题批次收口 / 修消费端正在挨的 bug 时发版。平时想验证用 --pack 的
 # tarball(tarball 是解包的真实文件、非项目外软链,Turbopack 不拒)。
-# 可用环境变量:TOOLX_DIR(默认 ~/lib/web/tooolx-prompt)、PACK_PACKAGES(--pack 打哪些包,默认 core+provider-openai)
+# 可用环境变量:TOOLX_DIR(默认 ~/lib/web/tooolx-prompt)、PACK_PACKAGES(--pack 打哪些包,默认 core+provider-openai+tools,即 tooolx 消费的全集)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 TOOLX_DIR="${TOOLX_DIR:-$HOME/lib/web/tooolx-prompt}"
@@ -13,7 +13,7 @@ TOOLX_DIR="${TOOLX_DIR:-$HOME/lib/web/tooolx-prompt}"
 # ---------- --pack:只打包,不动版本、不发 npm、不碰 tooolx ----------
 if [ "${1:-}" = "--pack" ]; then
 	PACK_DIR="$(pwd)/pack"
-	PACK_PACKAGES="${PACK_PACKAGES:-core provider-openai}"
+	PACK_PACKAGES="${PACK_PACKAGES:-core provider-openai tools}"
 	rm -rf "$PACK_DIR" && mkdir -p "$PACK_DIR"
 	echo '==> 构建'
 	pnpm -r build > /dev/null
@@ -78,7 +78,8 @@ pnpm -r test > /dev/null 2>&1 || { echo '测试失败,已中止发版(版本号�
 
 # 4. 发布
 echo '==> 发布'
-pnpm --filter @lingjing-agent/core --filter @lingjing-agent/provider-openai --filter @lingjing-agent/provider-anthropic --filter @lingjing-agent/tools --filter @lingjing-agent/mcp publish --no-git-checks
+# --access public:scoped 包首发默认 restricted,tools/mcp 首发必须显式 public(已 public 的包不受影响)
+pnpm --filter @lingjing-agent/core --filter @lingjing-agent/provider-openai --filter @lingjing-agent/provider-anthropic --filter @lingjing-agent/tools --filter @lingjing-agent/mcp publish --no-git-checks --access public
 
 # 5. 提交版本变更
 git add packages pnpm-lock.yaml
@@ -88,8 +89,8 @@ git commit -m "chore: release $NEXT" > /dev/null
 if [ -d "$TOOLX_DIR" ]; then
 	echo '==> 更新 tooolx-prompt'
 	cd "$TOOLX_DIR"
-	pnpm remove @lingjing-agent/core @lingjing-agent/provider-openai > /dev/null 2>&1 || true
-	pnpm add "@lingjing-agent/core@$NEXT" "@lingjing-agent/provider-openai@$NEXT" > /dev/null
+	pnpm remove @lingjing-agent/core @lingjing-agent/provider-openai @lingjing-agent/tools > /dev/null 2>&1 || true
+	pnpm add "@lingjing-agent/core@$NEXT" "@lingjing-agent/provider-openai@$NEXT" "@lingjing-agent/tools@$NEXT" > /dev/null
 	echo "    已更新到 $NEXT"
 fi
 
