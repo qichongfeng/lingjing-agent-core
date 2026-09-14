@@ -1,6 +1,6 @@
 {
   "name": "@lingjing-agent/provider-openai",
-  "version": "0.1.0-beta.8",
+  "version": "0.1.0-beta.9",
   "description": "OpenAI Chat Completions adapter for @lingjing-agent/core.",
   "type": "module",
   "main": "./dist/index.cjs",

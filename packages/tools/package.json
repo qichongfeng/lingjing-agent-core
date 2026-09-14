@@ -1,6 +1,6 @@
 {
   "name": "@lingjing-agent/tools",
-  "version": "0.1.0-beta.8",
+  "version": "0.1.0-beta.9",
   "description": "Built-in tools for @lingjing-agent/core, one package: main entry is cross-runtime web tools (web_search/read_feed/fetch_json/web_fetch, zero node: imports); the ./node subpath adds Node-only tools (fs/shell/glob/grep) and the Readability extractor.",
   "type": "module",
   "main": "./dist/index.cjs",
