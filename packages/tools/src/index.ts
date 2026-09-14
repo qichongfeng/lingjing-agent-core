@@ -8,19 +8,17 @@
 // layer; importing "./node" is the only step where platform-specific code
 // enters your bundle.
 //
-// The reliable-first web toolbox: wiki_search / news_search (keyless) and
-// web_search (host-keyed) for discovery, and web_read — the universal URL
-// reader that auto-dispatches JSON / RSS·Atom / HTML by what the server
-// returns. parseFeed / htmlToMarkdown are exported for direct use.
+// The reliable-first web toolbox: wiki_search (keyless) and web_search
+// (host-keyed) for discovery, and web_read — the universal URL reader that
+// auto-dispatches JSON / RSS·Atom / HTML by what the server returns.
+// parseFeed / htmlToMarkdown are exported for direct use.
 
 export { createWebReadTool } from "./web-read.js";
-export type { WebReadToolOptions, HtmlExtractor } from "./web-read.js";
+export type { WebReadToolOptions, HtmlExtractor, UrlForward } from "./web-read.js";
 export { createWebSearchTool } from "./web-search.js";
-export type { WebSearchToolOptions, WebSearchEngine, WebSearchResult } from "./web-search.js";
+export type { WebSearchToolOptions, WebSearchResult } from "./web-search.js";
 export { createWikiSearchTool } from "./wiki-search.js";
 export type { WikiSearchToolOptions, WikiSearchResult } from "./wiki-search.js";
-export { createNewsSearchTool } from "./news-search.js";
-export type { NewsSearchToolOptions, NewsSearchResult } from "./news-search.js";
 export { htmlToMarkdown } from "./html-to-markdown.js";
 export { parseFeed } from "./feed-parse.js";
 export type { FeedItem, ParsedFeed } from "./feed-parse.js";

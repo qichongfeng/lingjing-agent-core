@@ -89,7 +89,7 @@ import { createFsTools, createSafeShell, createGrepTool } from "@lingjing-agent/
 const agent = createAgent({
   /* provider, model, … */
   tools: [
-    // web_read (universal URL reader) + wiki_search + news_search; add
+    // web_read (universal URL reader) + wiki_search; add
     // webSearch: { apiKey } for keyed web search (+optional Readability via /node)
     ...createWebTools({ wiki: { languages: ["zh", "en"] } }),
     ...createFsTools({ root: process.cwd() }),                  // path-confined read/write/list/delete

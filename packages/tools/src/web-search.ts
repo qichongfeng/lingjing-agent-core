@@ -1,15 +1,31 @@
-// web_search tool — web search via a host-configured search API (Brave /
-// Tavily / Serper), returning {title, url, snippet} entries.
+// web_search tool — web search via Serper (google.serper.dev), returning
+// {title, url, snippet} entries (Google results).
 //
 // Search is the reliable answer to "the model needs to know something
 // current": snippets are server-rendered by the provider, immune to the SPA
 // and anti-bot failures that make direct page reads (web_read) unreliable
 // — and often answer the question without fetching anything at all.
 //
+// Why Serper as the single engine (probed 2026-09-14, from a mainland
+// network): it is the only keyed search API that is BOTH browser-readable
+// (Access-Control-Allow-Origin: * on the preflight AND on actual responses)
+// AND reachable without a proxy. A pure browser host may therefore call it
+// direct, accepting that the key ships in the bundle — with a free-tier key
+// the worst case is quota theft, bounded. The alternatives failed the probe:
+// Tavily answers preflights but sends no ACAO on actual responses (the
+// browser cannot read the body); Brave sends no CORS headers at all; Jina
+// s.jina.ai is CORS-open but unreachable from the mainland. Server-side
+// hosts don't care about any of this and get Google-quality results.
+//
 // The API key is HOST-owned configuration (opts.apiKey), exactly like OAuth
-// credentials in the MCP package — never something the model supplies. Same
-// family discipline: HttpTransport only (zero node:* imports), byte-capped
-// reads, network permission, tags ["http", "search"].
+// credentials in the MCP package — never something the model supplies. The
+// ENDPOINT is customizable (opts.endpoint) for hosts that route through a
+// gateway or a Serper-protocol-compatible backend — but the wire protocol
+// itself is FIXED by this tool: POST with a {q, num} JSON body, an x-api-key
+// header (ALWAYS sent — the key is part of the protocol, so it is required
+// with every endpoint), and an organic[] response. Customize WHERE, never
+// HOW. Same family discipline: HttpTransport only (zero node:* imports),
+// byte-capped reads, network permission, tags ["http", "search"].
 
 import { fetchTransport, type HttpTransport, type Tool, type ToolResultValue } from "@lingjing-agent/core";
 import { DEFAULT_USER_AGENT, readBodyText, requestError } from "./shared.js";
@@ -17,8 +33,7 @@ import { DEFAULT_USER_AGENT, readBodyText, requestError } from "./shared.js";
 const DEFAULT_MAX_RESULTS = 5;
 const MAX_RESULTS = 10;
 const RESULT_BODY_CAP = 256 * 1024;
-
-export type WebSearchEngine = "brave" | "tavily" | "serper";
+const ENDPOINT = "https://google.serper.dev/search";
 
 export interface WebSearchResult {
   title: string;
@@ -27,10 +42,16 @@ export interface WebSearchResult {
 }
 
 export interface WebSearchToolOptions {
-  /** Search API to call. Default "brave". */
-  engine?: WebSearchEngine;
-  /** Host-owned API key for the engine (Brave API / Tavily / Serper). Required. */
+  /** Host-owned Serper API key (serper.dev — or the host gateway's own token
+   *  when `endpoint` points at a proxy that swaps in the real key). Required
+   *  with every endpoint: x-api-key is part of the wire protocol and is
+   *  always sent. */
   apiKey: string;
+  /** Serper-protocol endpoint to POST to. Default https://google.serper.dev/search.
+   *  The wire protocol is FIXED by the tool ({q, num} body, x-api-key header,
+   *  organic[] response) — this customizes WHERE requests go (own gateway
+   *  route, Serper-compatible backend), never HOW they look. */
+  endpoint?: string;
   /** Custom transport (e.g. mini-program wx.request bridge). Default fetchTransport(). */
   transport?: HttpTransport;
   /** Results returned when the call does not specify `maxResults`. Default 5 (max 10). */
@@ -39,20 +60,11 @@ export interface WebSearchToolOptions {
   timeoutMs?: number;
 }
 
-interface EngineRequest {
-  url: string;
-  method: "GET" | "POST";
-  headers: Record<string, string>;
-  body?: string;
-  /** Map the engine's JSON response to common results. */
-  parse: (data: unknown) => WebSearchResult[];
-}
-
 export function createWebSearchTool(opts: WebSearchToolOptions): Tool {
   if (typeof opts.apiKey !== "string" || opts.apiKey === "") {
-    throw new Error("createWebSearchTool: opts.apiKey is required (host-owned search API key)");
+    throw new Error("createWebSearchTool: opts.apiKey is required with every endpoint (Serper key or gateway token)");
   }
-  const engine = opts.engine ?? "brave";
+  const endpoint = opts.endpoint ?? ENDPOINT;
   const transport = opts.transport ?? fetchTransport();
   const defaultMaxResults = clampResults(opts.maxResults ?? DEFAULT_MAX_RESULTS);
   const timeoutMs = opts.timeoutMs ?? 15_000;
@@ -60,7 +72,7 @@ export function createWebSearchTool(opts: WebSearchToolOptions): Tool {
   return {
     name: "web_search",
     description:
-      "Search the web and return entries as JSON ([{title, url, snippet}]). " +
+      "Search the web (Google results) and return entries as JSON ([{title, url, snippet}]). " +
       "Use for current information and discovery; snippets often answer the " +
       "question directly — read a result URL only when detail is needed.",
     inputSchema: {
@@ -86,14 +98,18 @@ export function createWebSearchTool(opts: WebSearchToolOptions): Tool {
         ? clampResults(Math.floor(inputMax))
         : defaultMaxResults;
 
-      const req = engineRequest(engine, opts.apiKey, query.trim(), maxResults);
       let resp;
       try {
         resp = await transport({
-          url: req.url,
-          method: req.method,
-          headers: { "user-agent": DEFAULT_USER_AGENT, ...req.headers },
-          ...(req.body !== undefined && { body: req.body }),
+          url: endpoint,
+          method: "POST",
+          headers: {
+            "user-agent": DEFAULT_USER_AGENT,
+            accept: "application/json",
+            "content-type": "application/json",
+            "x-api-key": opts.apiKey,
+          },
+          body: JSON.stringify({ q: query.trim(), num: maxResults }),
           signal: ctx.signal,
         });
       } catch (err) {
@@ -123,78 +139,23 @@ export function createWebSearchTool(opts: WebSearchToolOptions): Tool {
       } catch {
         return { content: "Search API returned a non-JSON response", isError: true };
       }
-      const results = req.parse(data).slice(0, maxResults);
+      const organic = (data as { organic?: unknown[] }).organic ?? [];
+      const results = organic.map((r): WebSearchResult => {
+        const e = r as { title?: unknown; link?: unknown; snippet?: unknown };
+        return {
+          title: typeof e.title === "string" ? e.title : "",
+          url: typeof e.link === "string" ? e.link : "",
+          snippet: typeof e.snippet === "string" ? e.snippet : "",
+        };
+      });
       if (results.length === 0) {
         return { content: `No results for: ${query}` };
       }
-      return { content: JSON.stringify(results, null, 2) };
+      return { content: JSON.stringify(results.slice(0, maxResults), null, 2) };
     },
   };
 }
 
 function clampResults(n: number): number {
   return Math.max(1, Math.min(MAX_RESULTS, n));
-}
-
-function engineRequest(
-  engine: WebSearchEngine,
-  apiKey: string,
-  query: string,
-  maxResults: number,
-): EngineRequest {
-  switch (engine) {
-    case "brave":
-      return {
-        url: `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${maxResults}`,
-        method: "GET",
-        headers: { accept: "application/json", "accept-encoding": "gzip", "x-subscription-token": apiKey },
-        parse: (data) => {
-          const results = (data as { web?: { results?: unknown[] } }).web?.results ?? [];
-          return results.map((r): WebSearchResult => {
-            const e = r as { title?: unknown; url?: unknown; description?: unknown };
-            return {
-              title: typeof e.title === "string" ? e.title : "",
-              url: typeof e.url === "string" ? e.url : "",
-              snippet: typeof e.description === "string" ? e.description : "",
-            };
-          });
-        },
-      };
-    case "tavily":
-      return {
-        url: "https://api.tavily.com/search",
-        method: "POST",
-        headers: { accept: "application/json", "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ query, max_results: maxResults }),
-        parse: (data) => {
-          const results = (data as { results?: unknown[] }).results ?? [];
-          return results.map((r): WebSearchResult => {
-            const e = r as { title?: unknown; url?: unknown; content?: unknown };
-            return {
-              title: typeof e.title === "string" ? e.title : "",
-              url: typeof e.url === "string" ? e.url : "",
-              snippet: typeof e.content === "string" ? e.content : "",
-            };
-          });
-        },
-      };
-    case "serper":
-      return {
-        url: "https://google.serper.dev/search",
-        method: "POST",
-        headers: { accept: "application/json", "content-type": "application/json", "x-api-key": apiKey },
-        body: JSON.stringify({ q: query, num: maxResults }),
-        parse: (data) => {
-          const results = (data as { organic?: unknown[] }).organic ?? [];
-          return results.map((r): WebSearchResult => {
-            const e = r as { title?: unknown; link?: unknown; snippet?: unknown };
-            return {
-              title: typeof e.title === "string" ? e.title : "",
-              url: typeof e.link === "string" ? e.link : "",
-              snippet: typeof e.snippet === "string" ? e.snippet : "",
-            };
-          });
-        },
-      };
-  }
 }

@@ -5,7 +5,6 @@
 //
 //   web_read    universal URL reader (JSON / feeds / HTML → Markdown)
 //   wiki_search keyless Wikipedia search
-//   news_search keyless Hacker News search (recent option)
 //   web_search  keyed web search — included ONLY when configured (apiKey)
 //
 // Each entry: pass options to configure, or `false` to leave it out.
@@ -13,7 +12,6 @@
 import type { Tool } from "@lingjing-agent/core";
 import { createWebReadTool, type WebReadToolOptions } from "./web-read.js";
 import { createWikiSearchTool, type WikiSearchToolOptions } from "./wiki-search.js";
-import { createNewsSearchTool, type NewsSearchToolOptions } from "./news-search.js";
 import { createWebSearchTool, type WebSearchToolOptions } from "./web-search.js";
 
 export interface WebToolsOptions {
@@ -21,10 +19,8 @@ export interface WebToolsOptions {
   read?: false | WebReadToolOptions;
   /** Keyless Wikipedia search. Default: enabled. */
   wiki?: false | WikiSearchToolOptions;
-  /** Keyless Hacker News (tech news) search. Default: enabled. */
-  news?: false | NewsSearchToolOptions;
-  /** Keyed web search (Brave/Tavily/Serper). Included only when provided —
-   *  requires a host-owned apiKey; never ship a key in client-side code. */
+  /** Keyed web search (Serper). Included only when provided — requires a
+   *  host-owned apiKey; see web-search.ts for the browser-direct caveat. */
   webSearch?: WebSearchToolOptions;
 }
 
@@ -33,7 +29,6 @@ export function createWebTools(opts: WebToolsOptions = {}): Tool[] {
   const tools: Tool[] = [];
   if (opts.read !== false) tools.push(createWebReadTool(opts.read ?? {}));
   if (opts.wiki !== false) tools.push(createWikiSearchTool(opts.wiki ?? {}));
-  if (opts.news !== false) tools.push(createNewsSearchTool(opts.news ?? {}));
   if (opts.webSearch !== undefined) tools.push(createWebSearchTool(opts.webSearch));
   return tools;
 }

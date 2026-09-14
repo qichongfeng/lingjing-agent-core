@@ -1,5 +1,5 @@
-// web_search: engine request shapes (brave GET / tavily+serper POST), result
-// mapping to {title,url,snippet}, key handling, clamps, error paths.
+// web_search (Serper): request shape (POST + x-api-key + {q,num}), result
+// mapping of organic[] to {title,url,snippet}, key handling, clamps, error paths.
 
 import { describe, expect, it } from "vitest";
 import type { HttpTransport, HttpTransportRequest, HttpTransportResponse } from "@lingjing-agent/core";
@@ -47,52 +47,42 @@ function recorder(respFor: (req: HttpTransportRequest) => HttpTransportResponse)
 }
 
 describe("createWebSearchTool", () => {
-  it("brave (default): GET with q/count + X-Subscription-Token; maps web.results", async () => {
-    const { t, reqs } = recorder(() =>
-      jsonResp({ web: { results: [{ title: "Brave Result", url: "https://b.example/x", description: "a snippet" }] } }),
-    );
-    const tool = createWebSearchTool({ apiKey: "brave-key", transport: t });
-    const r = await tool.execute({ query: "hello world" }, testCtx());
-    expect(r.isError).toBeFalsy();
-    const req = reqs[0]!;
-    expect(req.url).toBe("https://api.search.brave.com/res/v1/web/search?q=hello%20world&count=5");
-    expect(req.headers["x-subscription-token"]).toBe("brave-key");
-    const results = JSON.parse(r.content as string) as Array<Record<string, string>>;
-    expect(results[0]).toEqual({ title: "Brave Result", url: "https://b.example/x", snippet: "a snippet" });
-  });
-
-  it("tavily: POST JSON body with Bearer auth; maps results[]", async () => {
-    const { t, reqs } = recorder(() =>
-      jsonResp({ results: [{ title: "Tavily", url: "https://t.example/y", content: "tv snippet" }] }),
-    );
-    const tool = createWebSearchTool({ engine: "tavily", apiKey: "tv-key", transport: t, maxResults: 3 });
-    const r = await tool.execute({ query: "q1" }, testCtx());
-    const req = reqs[0]!;
-    expect(req.url).toBe("https://api.tavily.com/search");
-    expect(req.method).toBe("POST");
-    expect(req.headers["authorization"]).toBe("Bearer tv-key");
-    expect(JSON.parse(req.body as string)).toEqual({ query: "q1", max_results: 3 });
-    const results = JSON.parse(r.content as string) as Array<Record<string, string>>;
-    expect(results[0]?.snippet).toBe("tv snippet");
-  });
-
-  it("serper: POST with X-API-KEY; maps organic[]", async () => {
+  it("POSTs {q,num} with x-api-key; maps organic[] {title,link,snippet}", async () => {
     const { t, reqs } = recorder(() =>
       jsonResp({ organic: [{ title: "Serper", link: "https://s.example/z", snippet: "sp snippet" }] }),
     );
-    const tool = createWebSearchTool({ engine: "serper", apiKey: "sp-key", transport: t });
-    await tool.execute({ query: "q2", maxResults: 7 }, testCtx());
+    const tool = createWebSearchTool({ apiKey: "sp-key", transport: t, maxResults: 3 });
+    const r = await tool.execute({ query: "q1" }, testCtx());
+    expect(r.isError).toBeFalsy();
     const req = reqs[0]!;
     expect(req.url).toBe("https://google.serper.dev/search");
+    expect(req.method).toBe("POST");
     expect(req.headers["x-api-key"]).toBe("sp-key");
-    expect(JSON.parse(req.body as string)).toEqual({ q: "q2", num: 7 });
-    const r = await tool.execute({ query: "q2" }, testCtx());
+    expect(JSON.parse(req.body as string)).toEqual({ q: "q1", num: 3 });
     const results = JSON.parse(r.content as string) as Array<Record<string, string>>;
-    expect(results[0]?.url).toBe("https://s.example/z");
+    expect(results[0]).toEqual({ title: "Serper", url: "https://s.example/z", snippet: "sp snippet" });
   });
 
-  it("requires an apiKey at factory time", () => {
+  it("requires an apiKey with every endpoint (the key is part of the wire protocol)", () => {
     expect(() => createWebSearchTool({} as { apiKey: string })).toThrow(/apiKey is required/);
+    expect(() => createWebSearchTool({ endpoint: "/api/serper" } as unknown as { apiKey: string })).toThrow(
+      /apiKey is required/,
+    );
+  });
+
+  it("custom endpoint: request goes there with the x-api-key header; protocol unchanged", async () => {
+    const { t, reqs } = recorder(() =>
+      jsonResp({ organic: [{ title: "Via proxy", link: "https://p.example/a", snippet: "s" }] }),
+    );
+    const tool = createWebSearchTool({ endpoint: "/api/serper", apiKey: "gw-token", transport: t });
+    const r = await tool.execute({ query: "q" }, testCtx());
+    expect(r.isError).toBeFalsy();
+    const req = reqs[0]!;
+    expect(req.url).toBe("/api/serper"); // WHERE customized…
+    expect(req.headers["x-api-key"]).toBe("gw-token"); // …key is part of the protocol, always sent
+    expect(JSON.parse(req.body as string)).toEqual({ q: "q", num: 5 }); // …HOW unchanged
+    const results = JSON.parse(r.content as string) as Array<Record<string, string>>;
+    expect(results[0]?.url).toBe("https://p.example/a");
   });
 
   it("401/403 → isError with a check-the-key hint the model can relay", async () => {
@@ -105,7 +95,7 @@ describe("createWebSearchTool", () => {
   });
 
   it("empty result set → friendly no-results, not an error", async () => {
-    const { t } = recorder(() => jsonResp({ web: { results: [] } }));
+    const { t } = recorder(() => jsonResp({ organic: [] }));
     const tool = createWebSearchTool({ apiKey: "k", transport: t });
     const r = await tool.execute({ query: "nothing matches" }, testCtx());
     expect(r.isError).toBeFalsy();
@@ -113,11 +103,11 @@ describe("createWebSearchTool", () => {
   });
 
   it("refuses empty queries; clamps maxResults to 1..10", async () => {
-    const { t, reqs } = recorder(() => jsonResp({ web: { results: [] } }));
+    const { t, reqs } = recorder(() => jsonResp({ organic: [] }));
     const tool = createWebSearchTool({ apiKey: "k", transport: t });
     const empty = await tool.execute({ query: "  " }, testCtx());
     expect(empty.isError).toBe(true);
     await tool.execute({ query: "clamp", maxResults: 99 }, testCtx());
-    expect(reqs[0]?.url).toContain("count=10");
+    expect(JSON.parse(reqs[0]?.body as string)).toEqual({ q: "clamp", num: 10 });
   });
 });

@@ -6,7 +6,7 @@ Built-in tools for [`@lingjing-agent/core`](https://www.npmjs.com/package/@lingj
 
 | Entry | Runtime | Contents |
 | --- | --- | --- |
-| `@lingjing-agent/tools` | **Node / browser / Edge / mini-program** | `createWebTools()` → `web_read` (universal reader) · `wiki_search` · `news_search` (+ keyed `web_search`) — zero `node:*` imports, network only through core's `HttpTransport` |
+| `@lingjing-agent/tools` | **Node / browser / Edge / mini-program** | `createWebTools()` → `web_read` (universal reader) · `wiki_search` (+ keyed `web_search`) — zero `node:*` imports, network only through core's `HttpTransport` |
 | `@lingjing-agent/tools/node` | **Node / Electron / Tauri-main only** | `fs` (path-confined) · hardened `shell` · `glob` · `grep` · Readability extractor |
 
 The platform split is the package's internal structure, not your problem: import the main entry anywhere; import `./node` only from Node-side code (that import is the single point where platform-specific code enters your bundle).
@@ -25,7 +25,7 @@ import { createFsTools, createSafeShell, createGrepTool } from "@lingjing-agent/
 const agent = createAgent({
   /* provider, model, … */
   tools: [
-    // web layer (any runtime) — web_read + wiki_search + news_search in one call;
+    // web layer (any runtime) — web_read + wiki_search in one call;
     // add webSearch: { apiKey } for keyed web search
     ...createWebTools({ wiki: { languages: ["zh", "en"] } }),
     // node layer
@@ -45,32 +45,36 @@ A plain HTTP GET against today's web fails more often than it succeeds: JS-rende
 | Tool | Channel | Reliability |
 | --- | --- | --- |
 | `wiki_search` | Wikipedia API (any language, **no key**, CORS-open) | ★★★ — free, browser-direct |
-| `news_search` | Hacker News via Algolia (**no key**, CORS-open) | ★★★ — tech news, newest-first option |
-| `web_search` | host-keyed search API (Brave / Tavily / Serper) | ★★★ — server-rendered snippets, no scraping |
+| `web_search` | Serper — Google results via host-keyed API | ★★★ — server-rendered snippets, no scraping |
 | `web_read` | universal URL GET — JSON / feeds / HTML auto-dispatch | ★★★ JSON·feed / ★☆☆ HTML (static pages only) |
 
 Every tool ships with `permissions.network: true` (hosts can gate) and tags for `allowedToolTags` matching.
 
-## wiki_search / news_search — keyless search
+## wiki_search — keyless search
 
-The two searches that need **no API key and run browser-direct** (both send `Access-Control-Allow-Origin: *`):
+The search that needs **no API key and runs browser-direct** (Wikipedia sends `Access-Control-Allow-Origin: *`):
 
 ```ts
 createWikiSearchTool({ languages: ["zh", "en"] }) // Wikipedia, multilingual merge
-createNewsSearchTool()                            // Hacker News; { recent: true } for newest-first
 ```
 
 - `wiki_search` → `[{title, url, snippet, lang}]`. Concepts, definitions, factual lookups; the first choice before any keyed web search.
-- `news_search` → `[{title, url, points, comments, author, createdAt}]` — Hacker News, i.e. a **tech-community lens**: tech + science + major current events; English-only content (the tool description tells the model to translate queries and to flag scope for local/non-tech news).
 - Caveat: reachability follows the user's network (e.g. `*.wikipedia.org` is unreachable from mainland China without a proxy) — failures surface as tool errors for the model to report honestly.
 
-## web_search (keyed)
+## web_search (keyed — Serper)
 
 ```ts
-createWebSearchTool({ engine: "brave", apiKey: process.env.BRAVE_API_KEY! }) // or "tavily" | "serper"
+createWebSearchTool({ apiKey: process.env.SERPER_API_KEY! })          // server hosts: key in env
+createWebSearchTool({ endpoint: "/api/serper", apiKey: "gw-token" })  // gateway route: host-issued
+                                                                      // token; gateway swaps in the
+                                                                      // real Serper key server-side
 ```
 
-Returns `[{title, url, snippet}]` as JSON. The API key is **host-owned configuration** — exactly like OAuth credentials in the MCP package — never something the model supplies. Snippets often answer the question outright; fetch a result URL only when detail is needed. 15 s timeout, `maxResults` 1–10 (default 5).
+Returns Google results as `[{title, url, snippet}]` JSON. The API key is **host-owned configuration** — exactly like OAuth credentials in the MCP package — never something the model supplies. Snippets often answer the question outright; fetch a result URL only when detail is needed. 15 s timeout, `maxResults` 1–10 (default 5).
+
+**The endpoint is customizable, the protocol is not.** `endpoint` changes WHERE requests go — a gateway route or any Serper-protocol-compatible backend. The wire format stays fixed by the tool: `POST` with a `{q, num}` JSON body, an `x-api-key` header (**always sent — the key is part of the protocol and `apiKey` is required with every endpoint**, be it the Serper key or the host gateway's own token), and an `organic[]` response.
+
+Why Serper as the single engine (probed 2026-09-14): it is the only keyed search API that is **both** browser-readable (`Access-Control-Allow-Origin: *` on preflight and actual responses) **and** reachable from mainland China without a proxy. Tavily answers preflights but sends no ACAO on actual responses; Brave sends no CORS headers at all; Jina `s.jina.ai` is CORS-open but mainland-unreachable. Practical consequence: a **pure browser host may call Serper direct**, accepting that the key ships in the bundle — with a free-tier key the worst case is quota theft, bounded; or point `endpoint` at a gateway so the real key stays server-side while the client carries only a gateway token.
 
 ## web_read — the universal URL reader
 
@@ -91,11 +95,25 @@ Successful results cached per URL (+feed limit) for 15 min (`cacheTtlMs`, `0` di
 
 The feed parser (`parseFeed`) and `htmlToMarkdown` are exported for direct use.
 
+### Forwarding — browser hosts (URL 转发)
+
+浏览器直连受 CORS 与网络可达性双重限制("curl 能访问,工具读不了"的多半根因)。`forward` 让读取改走一个转发端点(自家服务端路由最稳:同源无 CORS、服务端网络无墙、无限速):
+
+```ts
+createWebReadTool({ forward: "/api/web-read?url={urlEncoded}" }) // own same-origin route
+createWebReadTool({ forward: "https://r.jina.ai/{url}" })        // Jina Reader(prefix style)
+createWebReadTool({ forward: (url) => signedProxyUrl(url) })      // full control
+```
+
+- 模板占位符:`{url}` 原样拼接、`{urlEncoded}` 编码进查询参数;无占位符的字符串按前缀拼接;函数形态随意;
+- 对模型完全透明:协议门禁、输出的 `url:`、缓存键、HTML 链接解析全部仍用**目标 URL**,转发端点不外露;
+- 不设默认转发方:每个被读的 URL 都会发给转发服务(隐私),且公共免费代理实测不可靠(AllOrigins/codetabs 间歇 500/超时;Jina 匿名档限速且拦机房 IP,免费 key 放 `headers` 即可用)——这是宿主的决策。要"先直连、失败再转发"的宿主请包一层自定义 `transport`。
+
 ## createWebTools — the one-call toolbox
 
 ```ts
 tools: [...createWebTools({ wiki: { languages: ["zh", "en"] } })]
-// → [web_read, wiki_search, news_search]; each entry: options to configure, false to drop.
+// → [web_read, wiki_search]; each entry: options to configure, false to drop.
 // webSearch: { apiKey } adds keyed web search (never ship a key in client-side code).
 ```
 

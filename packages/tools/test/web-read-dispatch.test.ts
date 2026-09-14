@@ -118,15 +118,15 @@ describe("web_read universal dispatch", () => {
 });
 
 describe("createWebTools aggregator", () => {
-  it("default: web_read + wiki_search + news_search", () => {
+  it("default: web_read + wiki_search", () => {
     const tools = createWebTools();
-    expect(tools.map((t) => t.name)).toEqual(["web_read", "wiki_search", "news_search"]);
+    expect(tools.map((t) => t.name)).toEqual(["web_read", "wiki_search"]);
   });
 
   it("false disables; options pass through; webSearch only when configured", () => {
-    const tools = createWebTools({ news: false, wiki: { languages: ["zh"] }, webSearch: { apiKey: "k" } });
-    expect(tools.map((t) => t.name)).toEqual(["web_read", "wiki_search", "web_search"]);
-    const wiki = tools[1];
+    const tools = createWebTools({ read: false, wiki: { languages: ["zh"] }, webSearch: { apiKey: "k" } });
+    expect(tools.map((t) => t.name)).toEqual(["wiki_search", "web_search"]);
+    const wiki = tools[0];
     // options pass through — languages wired into the request URL
     expect(wiki).toBeDefined();
   });

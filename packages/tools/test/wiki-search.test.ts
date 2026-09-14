@@ -1,9 +1,9 @@
-// wiki_search + news_search: request shapes (origin=* / endpoint / params),
-// result mapping, multi-language merge with partial failure, clamps, gating.
+// wiki_search: request shapes (origin=* / params), result mapping,
+// multi-language merge with partial failure, clamps, gating.
 
 import { describe, expect, it } from "vitest";
 import type { HttpTransport, HttpTransportRequest, HttpTransportResponse } from "@lingjing-agent/core";
-import { createWikiSearchTool, createNewsSearchTool } from "../src/index.js";
+import { createWikiSearchTool } from "../src/index.js";
 
 function testCtx(signal?: AbortSignal) {
   return {
@@ -110,60 +110,5 @@ describe("createWikiSearchTool", () => {
     const { t } = recorder(() => jsonResp(WIKI_BODY));
     const tool = createWikiSearchTool({ transport: t });
     expect((await tool.execute({ query: "  " }, testCtx())).isError).toBe(true);
-  });
-});
-
-describe("createNewsSearchTool", () => {
-  const HN_BODY = {
-    hits: [
-      {
-        title: "A 10x Faster TypeScript",
-        url: "https://devblogs.microsoft.com/typescript/typescript-native-port/",
-        author: "DanR",
-        points: 1042,
-        num_comments: 356,
-        created_at: "2026-09-08T10:00:00Z",
-        objectID: "44000001",
-      },
-      { title: "Ask HN: Side projects?", author: "joe", points: 12, num_comments: 40, created_at: "2026-09-09T10:00:00Z", objectID: "44000002" },
-    ],
-  };
-
-  it("searches HN Algolia (relevance endpoint, tags=story) and maps fields", async () => {
-    const { t, reqs } = recorder(() => jsonResp(HN_BODY));
-    const tool = createNewsSearchTool({ transport: t });
-    const r = await tool.execute({ query: "typescript" }, testCtx());
-    expect(reqs[0]?.url).toBe(
-      "https://hn.algolia.com/api/v1/search?query=typescript&tags=story&hitsPerPage=8",
-    );
-    expect(r.content as string).toMatch(/^as_of: \d{4}-\d{2}-\d{2}T/); // recency anchor
-    const results = JSON.parse((r.content as string).slice((r.content as string).indexOf("["))) as Array<Record<string, unknown>>;
-    expect(results[0]?.points).toBe(1042);
-    expect(results[0]?.comments).toBe(356);
-    expect(results[0]?.source).toBe("hackernews");
-    // Ask-HN style hit with no url falls back to the HN item link
-    expect(results[1]?.url).toBe("https://news.ycombinator.com/item?id=44000002");
-  });
-
-  it("recent:true switches to the by-date endpoint", async () => {
-    const { t, reqs } = recorder(() => jsonResp({ hits: [] }));
-    const tool = createNewsSearchTool({ transport: t });
-    await tool.execute({ query: "llm", recent: true, limit: 3 }, testCtx());
-    expect(reqs[0]?.url).toContain("/search_by_date?");
-    expect(reqs[0]?.url).toContain("hitsPerPage=3");
-  });
-
-  it("HTTP errors → isError; empty hits → plain no-results", async () => {
-    const fail = recorder(() => jsonResp({}, { status: 500, statusText: "Server Error" }));
-    const tool = createNewsSearchTool({ transport: fail.t });
-    const bad = await tool.execute({ query: "x" }, testCtx());
-    expect(bad.isError).toBe(true);
-    expect(bad.content as string).toContain("500");
-
-    const empty = recorder(() => jsonResp({ hits: [] }));
-    const tool2 = createNewsSearchTool({ transport: empty.t });
-    const none = await tool2.execute({ query: "zzz" }, testCtx());
-    expect(none.isError).toBeFalsy();
-    expect(none.content as string).toContain("No news results");
   });
 });
