@@ -65,7 +65,8 @@ export function createAskUserTool(opts: AskUserToolOptions): Tool {
     description:
       "Ask the human user one clarifying question and wait for their answer — call this " +
       "ONLY when you are genuinely blocked and the answer changes what you do next; when " +
-      "a reasonable default exists, decide yourself and say so. The tool result is the " +
+      "a reasonable default exists, decide yourself and say so. When the choice is " +
+      "enumerable, offer 2-4 options instead of an open question. The tool result is the " +
       "user's verbatim answer (their own words, or chosen option labels). If the tool " +
       "errors or times out (the user did not answer), proceed with your best judgment " +
       "and note the assumption in your reply.",
