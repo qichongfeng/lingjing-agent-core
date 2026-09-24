@@ -98,7 +98,7 @@ pnpm typecheck && pnpm test && pnpm check:purity   # 全绿:704 测试 / 47 文�
 仓库**没有** lint / format 工具链(根 devDeps 只有 `@types/node` / `tsup` / `typescript` / `vitest`),运行时边界由 `scripts/check-runtime-purity.mjs` 把守。
 
 ## 注意
-- `@lingjing-agent/*` 包已发布到 npm(当前 `0.1.0-beta.9`,见各包 `package.json`)。发版走 `scripts/release-snapshot.sh`;本仓内跨包引用用 `workspace:*`。prerelease 必须显式 `--tag`,registry 读取有滞后。
+- `@lingjing-agent/*` 包已发布到 npm(当前 `0.1.0-beta.10`,见各包 `package.json`)。发版走 `scripts/release-snapshot.sh`;本仓内跨包引用用 `workspace:*`。prerelease 必须显式 `--tag`,registry 读取有滞后。
 - 真机端到端需在小程序开发者工具里跑(需 `OPENAI_API_KEY` + 后台配 request 合法域名)。
 
 ---
