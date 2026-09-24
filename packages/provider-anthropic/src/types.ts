@@ -81,6 +81,8 @@ export interface AnthropicMessageRequest {
   top_p?: number;
   stop_sequences?: string[];
   thinking?: AnthropicThinkingConfig;
+  /** Reasoning-effort control (GA on current models). */
+  output_config?: { effort: string };
   "anthropic-beta"?: string;
 }
 

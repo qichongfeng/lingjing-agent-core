@@ -16,6 +16,12 @@ interface HttpLikeError {
   status?: number;
   headers?: Headers | Record<string, string> | null;
   message?: string;
+  /** Adapter-set machine code (e.g. "overloaded", "model_not_found") parsed
+   *  from the protocol body — must survive re-enrichment of status-less
+   *  errors (in-stream SSE failures). */
+  code?: string;
+  /** Explicit classification from the throw site wins over status-derived. */
+  retryable?: boolean;
 }
 
 export function enrichError(err: unknown): ProviderError {
@@ -26,7 +32,10 @@ export function enrichError(err: unknown): ProviderError {
   if (err instanceof Error && err.name === "AbortError") throw err;
   const e = err as HttpLikeError & Error;
   const status = typeof e?.status === "number" ? e.status : undefined;
-  const retryable = typeof status === "number" ? isRetryableStatus(status) : true;
+  const retryable =
+    typeof e?.retryable === "boolean" ? e.retryable
+    : typeof status === "number" ? isRetryableStatus(status)
+    : true;
   const retryAfterMs = parseRetryAfter(readHeader(e?.headers, "retry-after"));
   const message = e instanceof Error ? e.message : String(err);
   const out = Object.assign(new Error(message), {
@@ -34,6 +43,7 @@ export function enrichError(err: unknown): ProviderError {
     retryable,
     ...(typeof status === "number" ? { status } : {}),
     ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    ...(typeof e?.code === "string" ? { code: e.code } : {}),
   }) as ProviderError & Error;
   (out as { cause?: unknown }).cause = err;
   return out;

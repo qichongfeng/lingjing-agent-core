@@ -29,6 +29,47 @@ import type {
  *  - `thinking` is first-class: core `{type:"adaptive"}` → Anthropic
  *    `{type:"enabled",budget_tokens}`.
  */
+/** Parsed claude-family model version, e.g. "claude-opus-4-7-20251101" →
+ *  {family:"opus", major:4, minor:7}. Undefined for non-matching names
+ *  (the old "claude-3-5-sonnet" ordering, third-party compat names). */
+interface ClaudeVersion {
+  family: string;
+  major: number;
+  minor: number;
+}
+function claudeVersion(model: string): ClaudeVersion | undefined {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d+))?/.exec(model.toLowerCase());
+  if (!m) return undefined;
+  const family = m[1]!;
+  if (!["fable", "mythos", "opus", "sonnet", "haiku"].includes(family)) return undefined;
+  return { family, major: Number(m[2]), minor: m[3] !== undefined ? Number(m[3]) : 0 };
+}
+
+/** Sampling (temperature/top_p) is REMOVED on claude 4.7+/5+ — those models
+ *  400 on it. Older models and non-claude names keep the params (compat
+ *  endpoints decide their own rules). */
+function acceptsSampling(v: ClaudeVersion | undefined): boolean {
+  if (!v) return true;
+  return v.major < 4 || (v.major === 4 && v.minor <= 6);
+}
+
+/** core effort → output_config.effort, gated by per-version support (sending
+ *  it to an unsupported model is a 400, not a no-op):
+ *  - 4.7+/5+ (incl. fable/mythos): full low..max range
+ *  - 4.6: no xhigh → clamp to high
+ *  - opus-4.5: low..high → clamp xhigh/max to high
+ *  - sonnet/haiku-4.5 and older: unsupported → dropped (previous behavior) */
+function mapEffort(model: string, effort: NonNullable<ProviderConfig["effort"]>): { effort: string } | undefined {
+  const v = claudeVersion(model);
+  if (!v) return undefined;
+  if (v.major >= 5 || (v.major === 4 && v.minor >= 7)) return { effort };
+  if (v.major === 4 && v.minor === 6) return { effort: effort === "xhigh" ? "high" : effort };
+  if (v.family === "opus" && v.major === 4 && v.minor === 5) {
+    return { effort: effort === "xhigh" || effort === "max" ? "high" : effort };
+  }
+  return undefined;
+}
+
 export function mapRequest(req: ProviderRequest): AnthropicMessageRequest {
   const { model, system, messages, tools, config } = req;
 
@@ -49,10 +90,16 @@ export function mapRequest(req: ProviderRequest): AnthropicMessageRequest {
   }
   if (tools && tools.length > 0) out.tools = tools.map(mapTool);
   if (config.toolChoice) out.tool_choice = mapToolChoice(config.toolChoice);
-  if (config.temperature !== undefined) out.temperature = config.temperature;
-  if (config.topP !== undefined) out.top_p = config.topP;
+  // Swallowed (not forwarded) where the model rejects sampling with a 400.
+  const v = claudeVersion(model);
+  if (config.temperature !== undefined && acceptsSampling(v)) out.temperature = config.temperature;
+  if (config.topP !== undefined && acceptsSampling(v)) out.top_p = config.topP;
   if (config.stopSequences && config.stopSequences.length > 0) out.stop_sequences = config.stopSequences;
   if (config.thinking) out.thinking = mapThinking(config);
+  if (config.effort) {
+    const e = mapEffort(model, config.effort);
+    if (e) out.output_config = e;
+  }
 
   applyCacheControl(out, config);
   return out;
@@ -145,10 +192,17 @@ function applyCacheControl(out: AnthropicMessageRequest, config: ProviderConfig)
   }
   if (cc.targets.includes("last_user") && out.messages.length > 0) {
     const lastMsg = out.messages[out.messages.length - 1];
-    if (lastMsg && lastMsg.role === "user" && Array.isArray(lastMsg.content) && lastMsg.content.length > 0) {
-      const lastBlock = lastMsg.content[lastMsg.content.length - 1];
-      if (lastBlock && (lastBlock.type === "text" || lastBlock.type === "tool_result")) {
-        (lastBlock as { cache_control?: AnthropicCacheControl }).cache_control = marker;
+    if (lastMsg && lastMsg.role === "user") {
+      // String content cannot carry cache_control — promote it to one text
+      // block (the run's first user message is typically a plain string).
+      if (typeof lastMsg.content === "string" && lastMsg.content !== "") {
+        lastMsg.content = [{ type: "text", text: lastMsg.content }];
+      }
+      if (Array.isArray(lastMsg.content) && lastMsg.content.length > 0) {
+        const lastBlock = lastMsg.content[lastMsg.content.length - 1];
+        if (lastBlock && (lastBlock.type === "text" || lastBlock.type === "tool_result")) {
+          (lastBlock as { cache_control?: AnthropicCacheControl }).cache_control = marker;
+        }
       }
     }
   }

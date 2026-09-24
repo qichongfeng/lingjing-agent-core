@@ -107,9 +107,19 @@ export async function* mapStream(events: AsyncIterable<AnthropicStreamEvent>): A
         }
         case "error": {
           const e = (ev as unknown as{ error?: { message?: string; type?: string } }).error;
+          // Preserve the machine type as a ProviderError code (it was dropped
+          // before) and classify model-gone as non-retryable — retrying the
+          // same model cannot help. enrichError passes both through now.
+          const type = e?.type;
+          const code =
+            type === "overloaded_error" ? "overloaded"
+            : type === "model_not_found" || type === "not_found_error" ? "model_not_found"
+            : type;
           throw Object.assign(new Error(e?.message ?? "Anthropic stream error"), {
             name: "ProviderError",
             status: (ev as unknown as{ status?: number }).status,
+            ...(code !== undefined ? { code } : {}),
+            ...(code === "model_not_found" ? { retryable: false } : {}),
           });
         }
         case "ping":

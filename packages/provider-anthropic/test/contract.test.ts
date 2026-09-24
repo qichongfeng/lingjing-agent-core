@@ -48,6 +48,10 @@ describe("mapUsage", () => {
   test("maps input/output + prompt-cache tokens", () => {
     expect(mapUsage({ input_tokens: 10, output_tokens: 5 })).toEqual({ inputTokens: 10, outputTokens: 5 });
     const withCache = mapUsage({ input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 3, cache_creation_input_tokens: 2 });
+    // inputTokens is TOTAL input context (cached tokens occupy the window
+    // too — matching OpenAI prompt_tokens semantics); the cache fields stay
+    // as subsets for cost math.
+    expect(withCache.inputTokens).toBe(15);
     expect(withCache.cacheReadTokens).toBe(3);
     expect(withCache.cacheWriteTokens).toBe(2);
     expect(mapUsage(null)).toEqual({ inputTokens: 0, outputTokens: 0 });
@@ -111,6 +115,33 @@ describe("mapRequest", () => {
     expect(params.tool_choice).toEqual({ type: "any" });
     expect(params.thinking?.type).toBe("enabled");
     expect(typeof params.thinking?.budget_tokens).toBe("number");
+  });
+
+  test("image INSIDE tool_result content maps through (game_run screenshots)", () => {
+    const req = baseReq({
+      messages: [
+        {
+          id: "u2", role: "user", createdAt: 0,
+          content: [
+            {
+              type: "tool_result", toolCallId: "tc1",
+              content: [
+                { type: "text", text: "Loaded index.html · screenshot 1280x720 png" },
+                { type: "image", mediaType: "image/png", data: "abc" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const params = mapRequest(req);
+    const tr = (params.messages[0]?.content as { type: string; content?: unknown }[])[0];
+    expect(tr?.type).toBe("tool_result");
+    const inner = tr?.content as { type: string; source?: { media_type: string; data: string } }[];
+    expect(Array.isArray(inner)).toBe(true);
+    expect(inner[0]?.type).toBe("text");
+    expect(inner[1]?.type).toBe("image");
+    expect(inner[1]?.source).toEqual({ type: "base64", media_type: "image/png", data: "abc" });
   });
 });
 
@@ -235,5 +266,168 @@ describe("no vendor fields leak into core output", () => {
     for (const banned of ["content_block", "tool_use_id", "input_schema", "cache_control", "stop_reason", "input_tokens"]) {
       expect(serialized).not.toContain(banned);
     }
+  });
+});
+
+describe("availability-error codes (tier fallback signals)", () => {
+  function errorTransport(status: number, statusText: string, body: string): HttpTransport {
+    return (async (): Promise<HttpTransportResponse> => {
+      const enc = new TextEncoder();
+      const iter = (async function* () {
+        yield enc.encode(body);
+      })();
+      return { status, statusText, headers: {}, body: iter };
+    }) as unknown as HttpTransport;
+  }
+
+  /** Drains the stream and rejects with the provider error (or fails the test
+   *  if the stream unexpectedly succeeds). */
+  async function streamError(status: number, statusText: string, body: string): Promise<never> {
+    const p = new AnthropicProvider({
+      apiKey: "k",
+      baseURL: "https://example.test/v1",
+      transport: errorTransport(status, statusText, body),
+    });
+    for await (const _c of p.stream(baseReq())) void _c;
+    throw new Error("expected stream to reject");
+  }
+
+  test("529 + error.type overloaded_error → code 'overloaded', retryable", async () => {
+    await expect(
+      streamError(529, "Overloaded", JSON.stringify({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } })),
+    ).rejects.toMatchObject({ name: "ProviderError", status: 529, retryable: true, code: "overloaded" });
+  });
+
+  test("404 + not_found_error (unknown model) → code 'model_not_found', non-retryable", async () => {
+    await expect(
+      streamError(404, "Not Found", JSON.stringify({ type: "error", error: { type: "not_found_error", message: "model: claude-nope not found" } })),
+    ).rejects.toMatchObject({ name: "ProviderError", status: 404, retryable: false, code: "model_not_found" });
+  });
+
+  test("bare 529 with unparsable body (gateway) → code 'overloaded'", async () => {
+    await expect(
+      streamError(529, "Overloaded", "<html>busy</html>"),
+    ).rejects.toMatchObject({ status: 529, retryable: true, code: "overloaded" });
+  });
+
+  test("enrichError preserves an explicit retryable + code on status-less input (SSE error path)", () => {
+    const input = Object.assign(new Error("model gone"), {
+      name: "ProviderError",
+      retryable: false,
+      code: "model_not_found",
+    });
+    const out = enrichError(input);
+    expect(out.retryable).toBe(false);
+    expect(out.code).toBe("model_not_found");
+  });
+
+  test("mapStream error event maps the machine type to a code; model-gone is non-retryable", async () => {
+    await expect(
+      collect(mapStream(evs({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } } as never))),
+    ).rejects.toMatchObject({ code: "overloaded", retryable: true });
+    await expect(
+      collect(mapStream(evs({ type: "error", error: { type: "model_not_found", message: "no such model" } } as never))),
+    ).rejects.toMatchObject({ code: "model_not_found", retryable: false });
+  });
+});
+
+describe("sampling + effort model gating", () => {
+  const req = (model: string, extra: Partial<ProviderRequest["config"]> = {}) =>
+    mapRequest(baseReq({ model, config: { maxTokens: 100, temperature: 0.7, topP: 0.9, ...extra } })) as unknown as Record<string, unknown>;
+
+  test("claude 4.7+/5+ reject sampling — adapter swallows temperature/top_p", () => {
+    for (const model of ["claude-opus-4-7", "claude-fable-5-1", "claude-opus-4-7-20251101"]) {
+      const params = req(model);
+      expect(params["temperature"]).toBeUndefined();
+      expect(params["top_p"]).toBeUndefined();
+    }
+  });
+
+  test("older / non-claude models keep sampling", () => {
+    for (const model of ["claude-opus-4-6", "claude-sonnet-4-5", "some-vendor-model"]) {
+      const params = req(model);
+      expect(params["temperature"]).toBe(0.7);
+      expect(params["top_p"]).toBe(0.9);
+    }
+  });
+
+  test("effort maps to output_config per model support matrix", () => {
+    // 4.7+/5+: full range passes
+    expect(req("claude-opus-4-7", { effort: "xhigh" })["output_config"]).toEqual({ effort: "xhigh" });
+    expect(req("claude-fable-5-1", { effort: "max" })["output_config"]).toEqual({ effort: "max" });
+    // 4.6: no xhigh → clamped
+    expect(req("claude-opus-4-6", { effort: "xhigh" })["output_config"]).toEqual({ effort: "high" });
+    expect(req("claude-opus-4-6", { effort: "low" })["output_config"]).toEqual({ effort: "low" });
+    // opus-4.5: low..high only
+    expect(req("claude-opus-4-5", { effort: "max" })["output_config"]).toEqual({ effort: "high" });
+    // sonnet-4.5 / older / non-claude: dropped (no output_config at all)
+    expect(req("claude-sonnet-4-5", { effort: "high" })["output_config"]).toBeUndefined();
+    expect(req("some-vendor-model", { effort: "high" })["output_config"]).toBeUndefined();
+  });
+});
+
+describe("constructor-level prompt caching (cacheControl)", () => {
+  /** Transport that records each request's JSON body and returns a minimal SSE stream. */
+  function captureTransport(bodies: unknown[]): HttpTransport {
+    return (async (req: { body: string }): Promise<HttpTransportResponse> => {
+      bodies.push(JSON.parse(req.body));
+      const enc = new TextEncoder();
+      const body = (async function* () {
+        yield enc.encode("event: message_start\ndata: " + JSON.stringify({ type: "message_start", message: { id: "m", model: "c" } }) + "\n\n");
+        yield enc.encode("event: message_delta\ndata: " + JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { input_tokens: 1, output_tokens: 1 } }) + "\n\n");
+        yield enc.encode("event: message_stop\ndata: " + JSON.stringify({ type: "message_stop" }) + "\n\n");
+      })();
+      return { status: 200, statusText: "OK", headers: {}, body };
+    }) as unknown as HttpTransport;
+  }
+
+  test("cacheControl: {} → default two breakpoints (system + last user) on every request", async () => {
+    const bodies: unknown[] = [];
+    const p = new AnthropicProvider({ apiKey: "k", baseURL: "https://example.test/v1", transport: captureTransport(bodies), cacheControl: {} });
+    await collect(p.stream(baseReq()));
+    await collect(p.stream(baseReq()));
+    for (const b of bodies) {
+      const req = b as { system?: Array<{ cache_control?: unknown }>; messages: Array<{ role: string; content: unknown }> };
+      expect(Array.isArray(req.system)).toBe(true);
+      expect(req.system?.[0]?.cache_control).toEqual({ type: "ephemeral" });
+      const lastMsg = req.messages[req.messages.length - 1]!;
+      const lastBlock = Array.isArray(lastMsg.content) ? lastMsg.content[0] : undefined;
+      expect((lastBlock as { cache_control?: unknown } | undefined)?.cache_control).toEqual({ type: "ephemeral" });
+    }
+  });
+
+  test("cacheControl with ttl + custom targets is honored", async () => {
+    const bodies: unknown[] = [];
+    const p = new AnthropicProvider({
+      apiKey: "k", baseURL: "https://example.test/v1", transport: captureTransport(bodies),
+      cacheControl: { targets: ["system"], ttl: "1h" },
+    });
+    await collect(p.stream(baseReq()));
+    const req = bodies[0] as { system?: Array<{ cache_control?: unknown }>; messages: Array<{ role: string; content: unknown }> };
+    expect(req.system?.[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    const lastBlock = (Array.isArray(req.messages[0]!.content) ? req.messages[0]!.content[0] : undefined) as { cache_control?: unknown } | undefined;
+    expect(lastBlock?.cache_control).toBeUndefined(); // last_user not targeted
+  });
+
+  test("per-request providerOptions.cacheControl overrides the constructor default", async () => {
+    const bodies: unknown[] = [];
+    const p = new AnthropicProvider({
+      apiKey: "k", baseURL: "https://example.test/v1", transport: captureTransport(bodies),
+      cacheControl: { targets: ["system"], ttl: "1h" },
+    });
+    await collect(p.stream(baseReq({
+      config: { maxTokens: 8, providerOptions: { cacheControl: { targets: ["last_user"] } } },
+    })));
+    const req = bodies[0] as { system?: Array<{ cache_control?: unknown }>; messages: Array<{ role: string; content: unknown }> };
+    expect(req.system).toBe("you are helpful"); // string: no system breakpoint
+    const lastBlock = (Array.isArray(req.messages[0]!.content) ? req.messages[0]!.content[0] : undefined) as { cache_control?: unknown } | undefined;
+    expect(lastBlock?.cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  test("no cacheControl option → unchanged (no cache_control anywhere)", async () => {
+    const bodies: unknown[] = [];
+    const p = new AnthropicProvider({ apiKey: "k", baseURL: "https://example.test/v1", transport: captureTransport(bodies) });
+    await collect(p.stream(baseReq()));
+    expect(JSON.stringify(bodies[0])).not.toContain("cache_control");
   });
 });
