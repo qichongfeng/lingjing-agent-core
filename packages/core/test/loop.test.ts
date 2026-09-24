@@ -108,7 +108,7 @@ describe("agentic loop", () => {
 
   test("final message IS the persisted history object (identity + run stamp)", async () => {
     // The object runLoop pushes into history, returns, resolves done with, and
-    // hands to afterResponse must be the SAME instance — hosts locate the turn
+    // hands to afterTurn must be the SAME instance — hosts locate the turn
     // via indexOf/===, and memory.append persists what was pushed.
     const seen: { indexOfResponse: number; runId: unknown }[] = [];
     const provider = scriptedProvider([textTurn("done")]);
@@ -116,7 +116,7 @@ describe("agentic loop", () => {
       provider,
       model: "fake",
       hooks: {
-        async afterResponse(ctx) {
+        async afterTurn(ctx) {
           seen.push({ indexOfResponse: ctx.messages.indexOf(ctx.response), runId: ctx.response.metadata?.runId });
         },
       },

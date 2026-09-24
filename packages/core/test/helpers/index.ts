@@ -18,6 +18,11 @@ export {
   modifyingGate,
   recordingHooks,
   vetoingHook,
+  legacyVetoingHook,
+  abortingHook,
+  legacyAbortingHook,
   inputRewritingHook,
+  throwingHooks,
+  mutatingHook,
 } from "./gate-helpers.js";
 export type { RecordedHook } from "./gate-helpers.js";

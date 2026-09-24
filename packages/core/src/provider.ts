@@ -91,6 +91,9 @@ export interface LLMProvider {
   complete?(req: ProviderRequest): Promise<ProviderResponse>;
   /** Optional; core falls back to a heuristic estimate when absent. */
   countTokens?(messages: Message[], model: string): Promise<number>;
+  /** Informational capability report. The loop does not consult it today
+   *  (adapters self-gate request mapping); hosts may read it to decide
+   *  features (e.g. offer a thinking toggle only when `thinking` is true). */
   readonly capabilities: {
     stopReasons: readonly StopReason[];
     streaming: boolean;

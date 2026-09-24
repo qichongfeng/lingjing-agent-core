@@ -61,7 +61,8 @@ export class IDBStore implements MemoryStore {
     await request<undefined>(db, this.storeName, "readwrite", (s) => s.delete(conversationId));
   }
 
-  /** All stored conversation ids (not part of MemoryStore — UI convenience). */
+  /** All stored conversation ids — satisfies `MemoryStore.list`, so a recall
+   *  backend (createRecallStore) can discover its corpus; also a UI convenience. */
   async list(): Promise<string[]> {
     const db = await this.db;
     const keys = await request<IDBValidKey[]>(db, this.storeName, "readonly", (s) => s.getAllKeys());

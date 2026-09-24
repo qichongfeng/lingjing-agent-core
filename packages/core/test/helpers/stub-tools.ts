@@ -24,12 +24,14 @@ export function failTool(): Tool {
   };
 }
 
-export function slowTool(ms: number): Tool {
+/** `noTimeout` drops the generous per-tool budget, letting the agent-level
+ *  `toolTimeoutMs` govern — the only way to exercise the timeout path. */
+export function slowTool(ms: number, opts?: { noTimeout?: boolean }): Tool {
   return {
     name: "slow",
     description: `Sleeps ${ms}ms then returns.`,
     inputSchema: { jsonSchema: { type: "object", additionalProperties: true } },
-    timeoutMs: ms + 1000, // generous so it doesn't trip the default unless overridden
+    ...(opts?.noTimeout ? {} : { timeoutMs: ms + 1000 }), // generous so it doesn't trip the default unless overridden
     async execute(_input, ctx) {
       await new Promise<void>((resolve, reject) => {
         const t = setTimeout(resolve, ms);

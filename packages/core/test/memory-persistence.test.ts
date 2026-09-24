@@ -9,6 +9,7 @@ import {
   type LLMProvider,
   type MemoryStore,
   type Message,
+  type ProviderChunk,
   type StreamHandle,
   type Tool,
 } from "../src/index.js";
@@ -286,4 +287,172 @@ describe("per-turn usage persistence", () => {
     // without having watched the live done.totalUsage event.
     expect(conversationUsage(data.get("c1") ?? [])).toEqual({ inputTokens: 2, outputTokens: 2 });
   });
+});
+
+// ---------------------------------------------------------------------------
+// In-run compaction persistence (append-only contract): the store always keeps
+// the verbatim originals — dropped-at-compaction messages are persisted BEFORE
+// the view rewrite — and the next load MATERIALIZES the compacted view from
+// the note's coveredUntil stamp instead of re-sending the full history.
+// ---------------------------------------------------------------------------
+
+describe("in-run compaction persistence + reload materialization", () => {
+  test("dropped originals persist at compaction time; the next send materializes the note's view", async () => {
+    const { store, data } = recordingStore();
+    const SUMMARY_LABEL =
+      "[Earlier conversation summary — auto-generated recap of earlier turns, not a user message]";
+
+    // fit: no-op on turn 1, compacts once on turn 2 to [note, last message].
+    // coveredUntil = the last head message, mirroring CompactContextManager.
+    let fitCalls = 0;
+    const compacting: ContextManager = {
+      async fit(input) {
+        fitCalls++;
+        if (fitCalls < 2) return { messages: input.messages, compacted: false };
+        const tail = input.messages.slice(-1);
+        const lastHead = input.messages[input.messages.length - 2];
+        const noteMsg: Message = {
+          id: "note-run1", role: "user",
+          content: `${SUMMARY_LABEL}\nrecap of early turns`,
+          createdAt: 0,
+          metadata: { coveredUntil: lastHead?.id },
+        };
+        return { messages: [noteMsg, ...tail], compacted: true, tokensSaved: 10 };
+      },
+      async compact(input) { return { messages: input.messages, compacted: false }; },
+    };
+
+    // Run 1: turn 1 = tool_use (echo), turn 2 = text. fit before turn 2 compacts.
+    const reqs: Message[][] = [];
+    const provider1 = new FakeProvider((req, turn) => {
+      reqs.push(req.messages);
+      return turn === 0 ? toolCallTurn("ping", {}) : textTurn("done");
+    });
+    const agent = createAgent({
+      provider: provider1, model: "fake", maxTurns: 5,
+      memory: store, context: compacting,
+      tools: [{ name: "ping", description: "ping", inputSchema: { jsonSchema: { type: "object" } }, async execute() { return { content: "pong" }; } }],
+    });
+    await drain(agent.stream("go", { conversationId: "c" }));
+
+    // Append-only: the store holds the verbatim originals the view dropped
+    // (input + the tool turn), the note, and the post-compaction turns.
+    const persisted = data.get("c")!.map((m) => m.id);
+    expect(persisted).toContain("note-run1");
+    expect(persisted.some((id) => id !== "note-run1" && id.startsWith("note-"))).toBe(false); // one note only
+    // The original user input and the tool_use assistant turn survived in the
+    // store even though the run's view compacted them away.
+    const stored = data.get("c")!;
+    expect(stored.some((m) => m.role === "user" && m.content === "go")).toBe(true);
+    expect(stored.some((m) => Array.isArray(m.content) && m.content.some((b) => b.type === "tool_call"))).toBe(true);
+
+    // Run 2 (same conversation): the request view materializes the compaction —
+    // the note leads, the covered originals (incl. "go") are NOT re-sent.
+    const viewReqs: Message[][] = [];
+    const provider2 = new FakeProvider((req) => {
+      viewReqs.push(req.messages);
+      return textTurn("second");
+    });
+    const agent2 = createAgent({ provider: provider2, model: "fake", memory: store, context: compacting });
+    await drain(agent2.stream("next", { conversationId: "c" }));
+    const view = viewReqs[0]!;
+    expect(view[0]?.id).toBe("note-run1");
+    expect(view.some((m) => m.content === "go")).toBe(false);
+    expect(view.some((m) => m.content === "next")).toBe(true);
+    // fitCalls: run 1 saw 2 (turn 1 + turn 2), run 2 adds 1 → the run-2 fit ran
+    // over the MATERIALIZED view, not the full store.
+    expect(fitCalls).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-conversation send serialization (queue): a second send on the SAME
+// conversation waits for the previous run — including its persistence flush —
+// before loading history; different conversations stay fully parallel.
+// ---------------------------------------------------------------------------
+
+describe("same-conversation send serialization", () => {
+  test("concurrent double send: the second run's base includes the first run's messages", async () => {
+    const { store } = recordingStore();
+    const reqs: Message[][] = [];
+    const provider = new FakeProvider((req, turn) => {
+      reqs.push(req.messages);
+      return textTurn(turn === 0 ? "first" : "second");
+    });
+    const agent = createAgent({ provider, model: "fake", memory: store });
+    const conv = agent.conversation("serial");
+    const h1 = conv.send("one");
+    const h2 = conv.send("two"); // launched while h1 is in flight
+    const [m1, m2] = await Promise.all([h1.done, h2.done]);
+    expect(extractText(m1!)).toBe("first");
+    expect(extractText(m2!)).toBe("second");
+    // Run 1 saw only its input; run 2's base contains run 1's input AND reply.
+    expect(reqs[0]!.map((m) => (typeof m.content === "string" ? m.content : ""))).toEqual(["one"]);
+    const view2 = reqs[1]!.map((m) => extractText(m));
+    expect(view2).toEqual(["one", "first", "two"]);
+  });
+
+  test("abort → immediate resend: the resend's base includes the aborted run's salvaged partial", async () => {
+    const { store } = recordingStore();
+    const reqs: Message[][] = [];
+    let turn = 0;
+    const provider: LLMProvider = {
+      id: "hang-then-resend",
+      capabilities: { stopReasons: ["end_turn"], streaming: true },
+      stream(req) {
+        const mine = turn++;
+        reqs.push(req.messages);
+        return (async function* (): AsyncIterable<ProviderChunk> {
+          yield { type: "message_start", messageId: `m${mine}`, model: "fake" };
+          if (mine === 0) {
+            // Stream real text, then hang until aborted (a real transport dies on abort).
+            yield { type: "text_delta", text: "PARTIAL" };
+            await new Promise<never>((_, reject) => {
+              req.signal.addEventListener("abort", () => reject(new AbortError()), { once: true });
+            });
+          }
+          yield { type: "text_delta", text: "AFTER" };
+          yield { type: "message_end", stopReason: "end_turn", usage: { inputTokens: 1, outputTokens: 1 } };
+        })();
+      },
+    };
+    const agent = createAgent({ provider, model: "fake", memory: store });
+    const conv = agent.conversation("abort-race");
+    const h1 = conv.send("original");
+    const settled1 = h1.done.then(() => "ok", () => "aborted");
+    // Wait for the partial to actually stream before aborting.
+    for await (const e of h1.events) {
+      if (e.type === "text_delta") break;
+    }
+    h1.abort();
+    const h2 = conv.send("resend"); // launched BEFORE h1's persistence flush
+    const m2 = await h2.done;
+    expect(extractText(m2)).toBe("AFTER");
+    expect(await settled1).toBe("aborted");
+    // The resend's request saw the aborted run's input + salvaged partial —
+    // without the queue this load raced the flush and could miss them.
+    const view2 = reqs[1]!.map((m) => extractText(m));
+    expect(view2).toContain("original");
+    expect(view2).toContain("PARTIAL");
+    expect(view2).toContain("resend");
+  });
+
+  test("different conversations do NOT serialize (a slow one never blocks another)", async () => {
+    let releaseC2!: () => void;
+    const c2Started = new Promise<void>((resolve) => { releaseC2 = resolve; });
+    const provider = new FakeProvider((req) => {
+      if (req.conversationId === "c1") {
+        // c1 cannot finish until c2 has STARTED — a global lock would deadlock here.
+        return c2Started.then(() => textTurn("a"));
+      }
+      releaseC2();
+      return textTurn("b");
+    });
+    const agent = createAgent({ provider, model: "fake" });
+    const h1 = agent.stream("x", { conversationId: "c1" });
+    const h2 = agent.stream("y", { conversationId: "c2" });
+    const [m1, m2] = await Promise.all([h1.done, h2.done]);
+    expect(extractText(m1!)).toBe("a");
+    expect(extractText(m2!)).toBe("b");
+  }, 2000);
 });
