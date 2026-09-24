@@ -4,11 +4,11 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "demo:rag": "node --experimental-strip-types rag-inject-demo.ts",
-    "demo:wx-transport": "node --experimental-strip-types miniprogram-transport.selftest.ts",
-    "demo:ask-user": "node --experimental-strip-types ask-user-tool.ts",
-    "demo:media-store": "node --experimental-strip-types media-store.ts",
-    "demo:node-tools": "node --experimental-strip-types node-tools-demo.ts"
+    "demo:rag": "node --experimental-transform-types rag-inject-demo.ts",
+    "demo:wx-transport": "node --experimental-transform-types miniprogram-transport.selftest.ts",
+    "demo:ask-user": "node --experimental-transform-types ask-user-tool.ts",
+    "demo:media-store": "node --experimental-transform-types media-store.ts",
+    "demo:node-tools": "node --experimental-transform-types node-tools-demo.ts"
   },
   "dependencies": {
     "@lingjing-agent/core": "workspace:*",

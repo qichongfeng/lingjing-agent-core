@@ -1,24 +1,26 @@
 // RAG-inject demo: wires `ragInjectHook` so that, before each provider request,
-// the agent retrieves relevant snippets from a long-term memory store and injects
-// them as a labelled `[Retrieved context]` user message.
+// the agent retrieves relevant snippets from long-term memory and injects them
+// as a framed `[Retrieved context]` user message.
 //
-// No network / no API key — it uses a FakeProvider that records the request and a
-// toy substring-overlap recall. Run it after building:
+// The retrieval here is real: `createRecallStore` indexes every conversation in
+// an InMemoryStore (BM25 over latin + CJK tokens) and answers `recall` from it.
+// Swap the FakeProvider for a real provider and the InMemoryStore for IDBStore
+// (browser) or your own storage, and this same wiring is production RAG. The
+// store stays yours — core only asks it for messages and gives back snippets.
+//
+// No network / no API key. Run it after building:
 //
 //   pnpm -r build
-//   node --experimental-strip-types examples/rag-inject-demo.ts
-//
-// Swap the FakeProvider for a real provider (Anthropic/OpenAI) and the
-// SubstringMemory for a vector store, and this same wiring gives you real RAG.
+//   node --experimental-transform-types examples/rag-inject-demo.ts
 
 import {
   createAgent,
+  createRecallStore,
   extractText,
   ragInjectHook,
   InMemoryStore,
   type LLMProvider,
   type Message,
-  type MemorySnippet,
   type ProviderChunk,
   type ProviderRequest,
   type StopReason,
@@ -50,40 +52,62 @@ class FakeProvider implements LLMProvider {
   }
 }
 
-/**
- * A toy "long-term memory" with keyword-overlap recall (substring stand-in for a
- * vector store). recall() scores stored facts by how many query tokens they
- * contain and returns the top hits.
- */
-class SubstringMemory extends InMemoryStore {
-  private facts: MemorySnippet[] = [
-    { content: "The user's favorite color is teal.", source: "profile" },
-    { content: "The deploy command for this project is `pnpm ship`.", source: "runbook" },
-    { content: "Meetings are on Thursdays at 10:00.", source: "calendar" },
+function msg(role: Message["role"], text: string, id: string): Message {
+  return { id, role, content: text, createdAt: 0 };
+}
+
+/** Stand-in for "everything the user told us, months ago": one conversation per
+ *  topic, all of it already persisted. The agent's own conversation is separate. */
+async function seedHistory(store: InMemoryStore): Promise<void> {
+  const topics: [string, string][] = [
+    ["profile", "Just so you know, my favorite color is teal."],
+    ["runbook", "The deploy command for this project is `pnpm ship`."],
+    ["calendar", "Meetings are on Thursdays at 10:00."],
+    ["travel", "The flight to Lisbon is booked for the 14th."],
+    ["shopping", "The new keyboard is on the list for this month."],
+    ["notes", "The meeting notes are in the shared folder."],
+    ["homelab", "The wifi password is printed on the router."],
+    ["health", "My guess is the knee is fine by the weekend."],
   ];
-
-  override async recall(query?: string, opts?: { topK?: number }): Promise<MemorySnippet[]> {
-    if (!query) return this.facts.slice(0, opts?.topK ?? 4);
-    const stop = new Set([
-      "the", "a", "an", "is", "are", "was", "what", "whats", "my", "i", "it", "its",
-      "of", "to", "and", "for", "in", "on", "at", "hint", "shade", "this", "that",
-    ]);
-    const tokens = query
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((w) => w.length > 2 && !stop.has(w));
-
-    return this.facts
-      .map((fact) => {
-        const body = fact.content.toLowerCase();
-        const score = tokens.reduce((n, t) => n + (body.includes(t) ? 1 : 0), 0);
-        return { fact, score };
-      })
-      .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, opts?.topK ?? 4)
-      .map((x) => ({ ...x.fact, score: x.score }));
+  for (const [id, text] of topics) {
+    await store.append(id, [msg("assistant", text, `${id}-1`)]);
   }
+  await seedFiller(store);
+}
+
+/** The rest of the history: mundane conversations that exist so the corpus has
+ *  the shape of a real one. This is load-bearing, not padding.
+ *
+ *  BM25 decides what is informative from document frequency, so in a tiny
+ *  corpus a function word ("the", "to", "what") that happens to appear in only
+ *  one conversation gets maximal IDF — as much as "favorite" — and a question
+ *  about paint colors drags the flight booking into the prompt. No weighting
+ *  scheme can fix that: on eight documents there is genuinely no evidence that
+ *  "to" is common. Real histories are big enough for IDF to mean something, so
+ *  the demo's has to be too. Generated (not random) so the self-check is
+ *  reproducible. */
+async function seedFiller(store: InMemoryStore): Promise<void> {
+  const lines = [
+    "The notes for this week are in the shared folder.",
+    "What is the best way to do this?",
+    "It is on the list for next month.",
+    "My guess is that the answer is in the doc.",
+    "You can find the rest of it in the archive.",
+    "This is what I meant by the second option.",
+    "For now the plan is to wait and see.",
+    "The build is green and the tests are passing.",
+    "I think it is better to ask before doing that.",
+    "Can you check the logs for this run?",
+    "The meeting is on Thursday and it is short.",
+    "The password for the router is on a note.",
+  ];
+  const count = 40;
+  const writes: Promise<void>[] = [];
+  for (let i = 0; i < count; i++) {
+    const text = `${lines[i % lines.length]} ${lines[(i * 7 + 3) % lines.length]}`;
+    writes.push(store.append(`filler-${i}`, [msg("assistant", text, `filler-${i}-1`)]));
+  }
+  await Promise.all(writes);
 }
 
 function render(m: Message): string {
@@ -98,7 +122,12 @@ async function main(): Promise<void> {
     return textTurn("Got it.");
   });
 
-  const memory = new SubstringMemory();
+  const store = new InMemoryStore();
+  await seedHistory(store);
+  // One line is the whole integration. Pass the WRAPPER as `memory` — anything
+  // written through the raw store would be invisible to the index.
+  const memory = createRecallStore({ store });
+
   const agent = createAgent({
     provider,
     model: "demo",
@@ -106,10 +135,10 @@ async function main(): Promise<void> {
     hooks: { beforeRequest: ragInjectHook({ store: memory }) },
   });
 
-  const prompt = "What's my favorite color? It's a shade of teal.";
+  const prompt = "What's my favorite color? I want to repaint the kitchen.";
   console.log(`user prompt: ${prompt}\n`);
 
-  const { events, done } = agent.stream(prompt, { conversationId: "demo" });
+  const { events, done } = agent.stream(prompt, { conversationId: "today" });
   for await (const _e of events) void _e;
   await done;
 
@@ -122,18 +151,23 @@ async function main(): Promise<void> {
   console.log("--- messages sent to the provider (first turn) ---");
   for (const m of firstRequest) console.log(render(m));
 
-  const injected = firstRequest.some(
-    (m) => typeof m.content === "string" && m.content.includes("[Retrieved context]"),
-  );
-  const carried = firstRequest.some(
-    (m) => typeof m.content === "string" && m.content.includes("teal"),
-  );
+  const injectedText = firstRequest
+    .map((m) => (typeof m.content === "string" ? m.content : ""))
+    .find((t) => t.includes("[Retrieved context]"));
+  const injected = injectedText !== undefined;
+  const carried = injectedText?.includes("teal") === true;
+  // Ranking, not just matching: none of the other stored facts may ride along.
+  // Matching is trivial (every fact shares "the" with the question); keeping
+  // the other seven out is what BM25 + the score cutoff actually buy.
+  const otherFacts = ["pnpm ship", "Thursdays", "Lisbon", "keyboard", "shared folder", "router", "knee"];
+  const quiet = injectedText !== undefined && !otherFacts.some((f) => injectedText.includes(f));
 
+  const ok = injected && carried && quiet;
   console.log(
-    `\n${injected && carried ? "✓" : "✗"} RAG injection ${injected && carried ? "worked" : "failed"}: ` +
-      `[Retrieved context] present=${injected}, carried fact present=${carried}`,
+    `\n${ok ? "✓" : "✗"} lexical recall ${ok ? "worked" : "failed"}: ` +
+      `[Retrieved context] present=${injected}, relevant fact carried=${carried}, irrelevant facts excluded=${quiet}`,
   );
-  process.exit(injected && carried ? 0 : 1);
+  process.exit(ok ? 0 : 1);
 }
 
 main().catch((e) => {

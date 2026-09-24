@@ -2,7 +2,7 @@
 
 简体中文 | **[English](./README.md)**
 
-跨运行时、跨厂商的 TypeScript agent core。一份 `@lingjing-agent/core` 驱动 **Node · 浏览器 · Electron/Tauri · 微信小程序**。core 提供「大脑」（agentic loop、工具、记忆、可序列化流式事件），各端注入「手脚」（fs / shell / http / 存储 / UI）。
+跨运行时、跨厂商的 TypeScript agent core。一份 `@lingjing-agent/core` 驱动 **Node · 浏览器 · Electron/Tauri · 微信小程序**。core 提供「大脑」（agentic loop、工具、记忆、可序列化流式事件、三档模型 + 可用性降级），各端注入「手脚」（fs / shell / http / 存储 / UI）。
 
 ## 安装
 
@@ -62,6 +62,37 @@ await chat.send("北京天气怎么样?").done;
 await chat.send("那上海呢?").done; // 记得上下文
 ```
 
+会话可恢复，但 **run 不会自动续跑** —— 回复被崩溃 / 刷新 / 断网打断时，续不续由宿主决定（core 从不自作主张）。开启 `persistRuns` 让每条消息产生即落库，然后:
+
+```ts
+const store = new IDBStore();
+const agent = createAgent({ /* … */ memory: store, persistRuns: true });
+
+// inspectRunTail() 是纯函数,UI 可先问再决定要不要弹「继续?」:
+const tail = inspectRunTail(materializeCompactedView(await store.load(conversationId)));
+if (tail.kind !== "at-rest") await agent.conversation(conversationId).resume().done;
+```
+
+`resume()` 在续跑的同时修复历史：结果丢失的工具轮补上诚实的「**可能执行了也可能没有** —— 重放有副作用的调用前先验证」结果，写了一半的回复从断点接着写。
+
+### 跨会话长期记忆
+
+`createRecallStore` 给任何 store 补上可用的 `recall`（BM25 + CJK 分词，零依赖），`ragInjectHook` 再把它变成上下文。模型侧没有检索工具：相关历史自己浮上来。
+
+```ts
+import { createRecallStore, ragInjectHook } from "@lingjing-agent/core";
+
+const store = new IDBStore();
+const memory = createRecallStore({ store }); // 传包装器，不是 `store` 本身
+const agent = createAgent({
+  /* … */
+  memory,
+  hooks: { beforeRequest: ragInjectHook({ store: memory }) },
+});
+```
+
+检索每个用户轮只发生一次，跳过当前会话（它的内容已经在上下文里），命中结果以带框架声明的 `[Retrieved context]` 块注入。可运行的自检版本见 `examples/rag-inject-demo.ts`。
+
 ## 任意 OpenAI 兼容端点
 
 `provider-openai` 说的是 OpenAI Chat Completions **协议**（SDK-free）—— 改 `baseURL` 即可接 DeepSeek、豆包/火山、Kimi/Moonshot、智谱 GLM、通义 DashScope、Ollama、vLLM、OpenRouter……
@@ -75,24 +106,26 @@ const provider = new OpenAIProvider({
 
 ## 内置工具(可选注入)
 
-core 本身不内置任何工具——能力注入是设计原则。两个可选包提供硬化过的工具,按需 import、只把要用的传进 `tools`:
+core 本身不内置任何工具——能力注入是设计原则。可选包提供硬化过的工具,按需 import、只把要用的传进 `tools`:
 
 ```bash
-npm install @lingjing-agent/tools-node   # 仅 Node/Electron/Tauri 主进程
-npm install @lingjing-agent/tools-fetch  # 跨端(浏览器/Edge/小程序均可用)
+npm install @lingjing-agent/tools          # web 工具(浏览器/Edge/小程序均可用);./node 追加 fs/shell/glob/grep + Readability
+npm install @lingjing-agent/mcp            # 把外部 MCP server 的工具桥进来(仅工具,legacy era)
 ```
 
 ```ts
-import { createFsTools, createSafeShell, createGrepTool } from "@lingjing-agent/tools-node";
-import { createWebReadTool } from "@lingjing-agent/tools-fetch";
+import { createWebTools } from "@lingjing-agent/tools";
+import { createFsTools, createSafeShell, createGrepTool } from "@lingjing-agent/tools/node"; // 仅 Node 侧
 
 const agent = createAgent({
   /* provider、model 等 */
   tools: [
+    // web_read(全能 URL 读取器) + wiki_search;加 webSearch: { apiKey } 启用 keyed 搜索
+    // (+ 可选 Readability,经 /node 子入口)
+    ...createWebTools({ wiki: { languages: ["zh", "en"] } }),
     ...createFsTools({ root: process.cwd() }),                  // 路径 confinement 的读/写/列/删
     createSafeShell({ allowlist: ["git", "ls", "cat", "rg"] }), // 拒元字符 + spawn(shell:false) + 超时
     createGrepTool({ root: process.cwd() }),                    // 内容搜索(另有 createGlobTool)
-    createWebReadTool(),                                       // http(s) GET → 可读文本
   ],
 });
 ```
@@ -124,5 +157,5 @@ const handle = chat.send(input, { signal: someExternalSignal }); // 或调用 ha
 ## 更多
 
 - 完整设计与架构：[`DESIGN.md`](./DESIGN.md)
-- 内置工具包：[`@lingjing-agent/tools-node`](./packages/tools-node/) · [`@lingjing-agent/tools-fetch`](./packages/tools-fetch/)
+- 内置工具包：[`@lingjing-agent/tools`](./packages/tools/)（`./node` 子入口）· [`@lingjing-agent/mcp`](./packages/mcp/)
 - 可运行示例（RAG 注入、ask-user 工具、node 工具、小程序）：[`examples/`](./examples/)

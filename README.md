@@ -2,7 +2,7 @@
 
 **[简体中文](./README.zh-CN.md)** | English
 
-Runtime-agnostic, provider-agnostic TypeScript agent core. One `@lingjing-agent/core` drives **Node · Browser · Electron/Tauri · WeChat mini-program**. The core provides the brain (agentic loop, tools, memory, serializable streaming events); each host injects the hands (fs / shell / http / storage / UI).
+Runtime-agnostic, provider-agnostic TypeScript agent core. One `@lingjing-agent/core` drives **Node · Browser · Electron/Tauri · WeChat mini-program**. The core provides the brain (agentic loop, tools, memory, serializable streaming events, tiered models with availability fallback); each host injects the hands (fs / shell / http / storage / UI).
 
 ## Install
 
@@ -61,6 +61,47 @@ const chat = agent.conversation("c1");
 await chat.send("What's the weather in Beijing?").done;
 await chat.send("And in Shanghai?").done; // remembers the context
 ```
+
+Conversations recover; **runs don't auto-resume** — if a reply is cut off by a
+crash, reload, or dropped connection, the host decides whether to continue it
+(core never does so on its own). Turn on `persistRuns` so each message is
+durable as it is produced, then:
+
+```ts
+const store = new IDBStore();
+const agent = createAgent({ /* … */ memory: store, persistRuns: true });
+
+// inspectRunTail() is pure, so the UI can decide whether to offer "continue?":
+const tail = inspectRunTail(materializeCompactedView(await store.load(conversationId)));
+if (tail.kind !== "at-rest") await agent.conversation(conversationId).resume().done;
+```
+
+`resume()` repairs the history as it drives: a tool round whose results were
+lost gets honest *"may or may not have run — verify before re-calling"*
+results, and a half-written reply is continued from where it stopped.
+
+### Long-term memory across conversations
+
+`createRecallStore` gives any store a working `recall` (BM25 over latin + CJK
+tokens, zero dependencies), which `ragInjectHook` then turns into context. No
+search tool for the model: relevant history surfaces on its own.
+
+```ts
+import { createRecallStore, ragInjectHook } from "@lingjing-agent/core";
+
+const store = new IDBStore();
+const memory = createRecallStore({ store }); // pass the WRAPPER, not `store`
+const agent = createAgent({
+  /* … */
+  memory,
+  hooks: { beforeRequest: ragInjectHook({ store: memory }) },
+});
+```
+
+Retrieval happens once per user turn, skips the current conversation (its
+content is already in context), and injects the hits as a framed
+`[Retrieved context]` block. `examples/rag-inject-demo.ts` is a runnable,
+self-checking version of this.
 
 ## Any OpenAI-compatible endpoint
 

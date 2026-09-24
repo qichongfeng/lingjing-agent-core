@@ -1,7 +1,7 @@
 // createWxTransport 的自验证:用 mock wx 模拟微信事件时序,验证它满足 core 的
 // HttpTransport 契约。跑:
 //   pnpm --filter @lingjing-agent/example-anthropic-demo demo:wx-transport
-//   (或:node --experimental-strip-types miniprogram-transport.selftest.ts)
+//   (或:node --experimental-transform-types miniprogram-transport.selftest.ts)
 
 import assert from "node:assert/strict";
 import { createWxTransport } from "./miniprogram-transport.ts";
