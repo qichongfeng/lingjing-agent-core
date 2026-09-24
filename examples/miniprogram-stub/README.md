@@ -11,31 +11,31 @@
 | `pages/chat/*` | 聊天页:消费 `agent.stream` 事件流、流式渲染、`onUnload` abort、停止按钮 |
 | `miniprogram-transport.js` | `wx.request` → `HttpTransport` 适配器(派生自 `examples/miniprogram-transport.ts`,改逻辑请改 `.ts` 源) |
 
-## 接入 @lingjing-agent/* 包(关键:这些包目前未发布到 npm)
+## 接入 @lingjing-agent/* 包
 
-core / provider-openai 在本仓库是 workspace 包(`private`, `version 0.0.0`)。小程序工程要用,三选一:
+包已发布到 npm 公共 registry(`--access public`,当前 0.1.0-beta.x)。小程序工程要用,三选一:
 
-### 方式 A:本地 `file:` 依赖(开发期最简单)
-先在本仓库 `pnpm -r build`(产出各包 `dist/`)。然后在小程序工程的 `miniprogram/package.json`:
+### 方式 A:registry 安装(默认)
+在小程序工程的 `miniprogram/package.json`(版本号换成当前发布版):
 ```json
 {
   "dependencies": {
-    "@lingjing-agent/core": "file:../../path/to/lingjing-agent-core/packages/core",
-    "@lingjing-agent/provider-openai": "file:../../path/to/lingjing-agent-core/packages/provider-openai"
+    "@lingjing-agent/core": "0.1.0-beta.10",
+    "@lingjing-agent/provider-openai": "0.1.0-beta.10"
   }
 }
 ```
-`cd miniprogram && npm install`,然后微信开发者工具「工具 → 构建 npm」。
+`cd miniprogram && npm install`,然后微信开发者工具「工具 → 构建 npm」。升级 = 改版本号重装 + 重新构建 npm。
 
-### 方式 B:拷贝 dist(最稳,不依赖符号链接)
+### 方式 B:本地 `file:` 依赖(改内核源码联调时)
+先在本仓库 `pnpm -r build`(产出各包 `dist/`),依赖写 `file:../../path/to/lingjing-agent-core/packages/core` 等路径,其余同方式 A。
+
+### 方式 C:拷贝 dist(最稳,不依赖符号链接/网络)
 把 `packages/core/dist` 整个拷成 `miniprogram/libs/agent-core/`,`packages/provider-openai/dist` 拷成 `miniprogram/libs/provider-openai/`。`app.js` 改成:
 ```js
 const { createAgent } = require("./libs/agent-core/index.cjs");
 const { OpenAIProvider } = require("./libs/provider-openai/index.cjs");
 ```
-
-### 方式 C:发布到私有 npm
-各包 `npm publish` 到私有 registry,小程序工程正常 `npm install @lingjing-agent/core @lingjing-agent/provider-openai`。
 
 ## 使用步骤
 1. 微信开发者工具**新建项目**(填你的 appid 或选测试号),把本目录所有文件拷进 `miniprogram/`(或直接以本目录为 `miniprogramRoot`)。
