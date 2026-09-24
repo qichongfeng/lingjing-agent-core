@@ -1,7 +1,7 @@
 {
   "name": "@lingjing-agent/mcp",
   "version": "0.1.0-beta.9",
-  "description": "MCP client bridge for @lingjing-agent/core — bridge an external MCP server's tools into core Tools. Hand-rolled JSON-RPC (legacy initialize era, tools only), zero deps. Cross-runtime entry (HTTP over core HttpTransport); stdio transport via \"@lingjing-agent/mcp/node\" (Node only).",
+  "description": "MCP client bridge + server side for @lingjing-agent/core — bridge an external MCP server's tools into core Tools (createMcpTools), or expose core Tools as an MCP server (createMcpServer). Hand-rolled JSON-RPC (legacy initialize era, tools only), zero deps. Cross-runtime entry (HTTP over core HttpTransport); both stdio halves via \"@lingjing-agent/mcp/node\" (client transport + server channel, Node only).",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

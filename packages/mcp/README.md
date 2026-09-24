@@ -118,3 +118,28 @@ The transport injects `Authorization: Bearer <token>`, and on a `401` invalidate
 ## Low-level client
 
 For non-agent use, `McpClient` speaks the JSON-RPC directly (`connect` / `listTools` / `callTool` / `listResources` / `readResource` / `listPrompts` / `getPrompt` / `close`) over any `McpTransport`; `createHttpMcpTransport({ url, headers, transport, auth })` and `createStdioMcpTransport(...)` are the two built-in transports.
+
+## Server side
+
+`createMcpServer` is the mirror image: expose your agent's core `Tool`s to external MCP clients (Claude Desktop, an IDE, another agent). Implementments the tools surface (`initialize` / `ping` / `tools/list` / `tools/call` + `notifications/cancelled`); the message channel is the server-direction seam — `createStdioMcpServerChannel()` (from `@lingjing-agent/mcp/node`) speaks over this process's own stdin/stdout, i.e. your process IS the MCP server:
+
+```ts
+import { createMcpServer } from "@lingjing-agent/mcp";
+import { createStdioMcpServerChannel } from "@lingjing-agent/mcp/node";
+
+const server = createMcpServer({
+  channel: createStdioMcpServerChannel(), // stdin/stdout of THIS process
+  name: "my-agent-tools",
+  version: "1.0.0",
+  instructions: "Optional usage instructions for clients.",
+  tools: myCoreTools, // Tool[] — mutate later via server.registerTool
+});
+```
+
+Contract notes (mirrors the client bridge):
+
+- Tool descriptors pass `name` / `description` through and unwrap `inputSchema.jsonSchema` to the raw JSON Schema; a tool with `permissions.destructive: true` announces `annotations.destructiveHint: true` (read-only hints are not guessed).
+- `tools/call` runs `tool.execute` with a per-request `AbortController` — a `notifications/cancelled` aborts it, a `toolTimeoutMs` budget (default 120 s) turns a hung tool into an `isError` result.
+- Nothing throws across the wire: tool failures are `isError` results (the spec's convention), unknown tool / unknown method are `-32602` / `-32601`, and result text is capped (default 1 M chars) so it cannot break the transport's frame guard.
+- Arguments pass through verbatim — schema enforcement is the caller's job (a well-behaved client validates before calling) or the tool's.
+- Logging goes to stderr; stdout is the protocol channel and must never carry logs.

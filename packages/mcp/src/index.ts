@@ -1,17 +1,26 @@
-// @lingjing-agent/mcp — MCP client bridge for @lingjing-agent/core.
+// @lingjing-agent/mcp — MCP client bridge + MCP server side for @lingjing-agent/core.
 //
-// Bridges an external MCP server's tools into core `Tool` objects
-// (createMcpTools). Hand-rolled JSON-RPC, legacy initialize era
+// Client: bridges an external MCP server's tools into core `Tool` objects
+// (createMcpTools). Server: exposes core `Tool`s to external MCP clients
+// (createMcpServer). Hand-rolled JSON-RPC, legacy initialize era
 // (2024-11-05 … 2025-11-25). Tools, resources, and prompts are bridged
 // (as tools — core has no first-class resource/prompt surface); the modern
 // (2026-07-28+) stateless era is a separate, later concern.
 //
 // Zero node:* imports: safe to bundle into browser/Edge/mini-program hosts.
 // The Streamable HTTP transport rides core's HttpTransport (inject a
-// wx.request bridge for mini-programs). stdio lives in "@lingjing-agent/mcp/node".
+// wx.request bridge for mini-programs). stdio (both halves — the client
+// transport and the server channel) lives in "@lingjing-agent/mcp/node".
 
 export { createMcpTools } from "./tools.js";
 export type { McpToolsOptions, McpToolsSession } from "./tools.js";
+
+export { createMcpServer } from "./server.js";
+export type {
+  McpServerChannel,
+  McpServerOptions,
+  McpServerHandle,
+} from "./server.js";
 
 export {
   McpClient,
