@@ -17,6 +17,8 @@ interface HttpLikeError {
   headers?: Headers | Record<string, string> | null;
   message?: string;
   code?: string;
+  /** Explicit classification from the throw site wins over status-derived. */
+  retryable?: boolean;
 }
 
 /**
@@ -35,7 +37,11 @@ export function enrichError(err: unknown): ProviderError {
   const e = err as HttpLikeError & Error;
   const status = typeof e?.status === "number" ? e.status : undefined;
   // No status ⇒ likely a transient network error (no HTTP response at all) ⇒ retry.
-  const retryable = typeof status === "number" ? isRetryableStatus(status) : true;
+  // An explicit classification from the throw site wins over status-derived.
+  const retryable =
+    typeof e?.retryable === "boolean" ? e.retryable
+    : typeof status === "number" ? isRetryableStatus(status)
+    : true;
   const retryAfterMs = parseRetryAfter(readHeader(e?.headers, "retry-after"));
   const code = typeof e?.code === "string" ? e.code : undefined;
   const message = e instanceof Error ? e.message : String(err);

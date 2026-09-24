@@ -180,6 +180,25 @@ describe("mapRequest", () => {
     expect(params["reasoning_effort"]).toBeUndefined();
   });
 
+  test("dialect compat: never OpenAI-only params, even for o-series model names", () => {
+    // A generic compatible endpoint (DashScope/vLLM/gateway): model names may
+    // look OpenAI-ish but the official params are rejected or ignored there.
+    const params = mapRequest(
+      baseReq({ model: "o3-mini", config: { maxTokens: 10, effort: "high", thinking: { type: "disabled" } } }),
+      "compat",
+    ) as unknown as Record<string, unknown>;
+    expect(params["max_tokens"]).toBe(10);
+    expect(params["max_completion_tokens"]).toBeUndefined();
+    expect(params["reasoning_effort"]).toBeUndefined();
+  });
+
+  test("dialect openai: official semantics for names the sniff table misses", () => {
+    // `ft:` fine-tunes / gateway aliases: sniffing fails, declaration wins.
+    const params = mapRequest(baseReq({ model: "ft:gpt-5-custom" }), "openai") as unknown as Record<string, unknown>;
+    expect(params["max_completion_tokens"]).toBe(1024);
+    expect(params["max_tokens"]).toBeUndefined();
+  });
+
   test("isOpenAISeries recognizes o-series / gpt-5", () => {
     expect(isOpenAISeries("o1")).toBe(true);
     expect(isOpenAISeries("o3-mini")).toBe(true);
@@ -345,13 +364,19 @@ describe("OpenAIProvider capabilities", () => {
     ]);
   });
 
-  test("countTokens is a char/4 heuristic", async () => {
+  test("countTokens is the shared CJK-aware estimate", async () => {
     const p = new OpenAIProvider({ apiKey: "test" });
     const n = await p.countTokens(
       [{ id: "x", role: "user", content: "12345678", createdAt: 0 }],
       "gpt-4o",
     );
-    expect(n).toBe(2); // 8 chars / 4
+    expect(n).toBe(2); // 8 ASCII chars / 4
+    // CJK counts ~1 token per char, not 1/4 — the old char/4 undercounted 4×.
+    const cjk = await p.countTokens(
+      [{ id: "x", role: "user", content: "你好世界", createdAt: 0 }],
+      "gpt-4o",
+    );
+    expect(cjk).toBe(4);
   });
 });
 
@@ -631,3 +656,72 @@ describe("OpenAIProvider.complete over fetch", () => {
   });
 });
 
+
+describe("availability-error codes (tier fallback signals)", () => {
+  function fetchError(status: number, statusText: string, body: string): typeof fetch {
+    return (async () =>
+      new Response(body, { status, statusText, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+  }
+
+  test("404 + error.code model_not_found → code 'model_not_found', non-retryable", async () => {
+    const p = new OpenAIProvider({
+      apiKey: "k",
+      fetch: fetchError(404, "Not Found", JSON.stringify({ error: { code: "model_not_found", message: "The model 'gpt-x' does not exist" } })),
+    });
+    await expect(p.complete(baseReq())).rejects.toMatchObject({
+      name: "ProviderError",
+      status: 404,
+      retryable: false,
+      code: "model_not_found",
+    });
+  });
+
+  test("bare 529 (gateway overload) → code 'overloaded', retryable", async () => {
+    const p = new OpenAIProvider({ apiKey: "k", fetch: fetchError(529, "Overloaded", "busy") });
+    await expect(p.complete(baseReq())).rejects.toMatchObject({
+      status: 529,
+      retryable: true,
+      code: "overloaded",
+    });
+  });
+
+  test("enrichError honors an explicit retryable + code on status-less input", () => {
+    const out = enrichError(
+      Object.assign(new Error("gone"), { name: "ProviderError", retryable: false, code: "model_not_found" }),
+    );
+    expect(out.retryable).toBe(false);
+    expect(out.code).toBe("model_not_found");
+  });
+});
+
+describe("sampling guard for reasoning models", () => {
+  test("o-series under auto: temperature/top_p swallowed (they 400 on those)", () => {
+    const params = mapRequest(baseReq({ model: "o3-mini", config: { maxTokens: 10, temperature: 0.7, topP: 0.9 } })) as unknown as Record<string, unknown>;
+    expect(params["temperature"]).toBeUndefined();
+    expect(params["top_p"]).toBeUndefined();
+  });
+
+  test("legacy model keeps sampling; compat dialect keeps it even for o-series names", () => {
+    const legacy = mapRequest(baseReq({ model: "gpt-4o", config: { maxTokens: 10, temperature: 0.7, topP: 0.9 } })) as unknown as Record<string, unknown>;
+    expect(legacy["temperature"]).toBe(0.7);
+    expect(legacy["top_p"]).toBe(0.9);
+    const compat = mapRequest(baseReq({ model: "o3-mini", config: { maxTokens: 10, temperature: 0.7, topP: 0.9 } }), "compat") as unknown as Record<string, unknown>;
+    expect(compat["temperature"]).toBe(0.7);
+    expect(compat["top_p"]).toBe(0.9);
+  });
+
+  test("the guard is a MODEL property, not a dialect one: gpt-4o-class keeps sampling under dialect 'openai'", () => {
+    // Sampling rejection is a reasoning-series trait. dialect "openai" only
+    // declares the wire PARAM SPELLING (max_completion_tokens etc.) — a
+    // gpt-4o (incl. its ft: fine-tunes) still accepts temperature/top_p, so
+    // dropping them there would silently change sampling behavior.
+    const ft = mapRequest(baseReq({ model: "ft:gpt-4o-2024-08-06:org:snap", config: { maxTokens: 10, temperature: 0.7, topP: 0.9 } }), "openai") as unknown as Record<string, unknown>;
+    expect(ft["temperature"]).toBe(0.7);
+    expect(ft["top_p"]).toBe(0.9);
+    expect(ft["max_completion_tokens"]).toBe(10); // param spelling still official
+    // …while a declared-official reasoning model still drops sampling.
+    const o3 = mapRequest(baseReq({ model: "o3-mini", config: { maxTokens: 10, temperature: 0.7, topP: 0.9 } }), "openai") as unknown as Record<string, unknown>;
+    expect(o3["temperature"]).toBeUndefined();
+    expect(o3["top_p"]).toBeUndefined();
+  });
+});

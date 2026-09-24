@@ -40,8 +40,32 @@ function isOpenAISeries(model: string): boolean {
   return O_SERIES_PREFIXES.some((p) => m === p || m.startsWith(p + "-") || m.startsWith(p + ".") || m.startsWith(p + "_"));
 }
 
-export function mapRequest(req: ProviderRequest): OpenAIChatParams {
+/** Wire dialect for the endpoint behind this adapter. The chat-completions
+ *  wire format is a family of dialects, not one standard: OpenAI-official
+ *  extensions (`max_completion_tokens`, `reasoning_effort`) are rejected or
+ *  silently ignored by most compatible endpoints, and OpenAI itself rejects
+ *  unknown params — so which extensions to emit must be decidable.
+ *  - "auto" (default): model-name sniffing — OpenAI-ish names get OpenAI
+ *    semantics, everything else the conservative generic set. The adapter's
+ *    only signal when nobody declares anything.
+ *  - "openai": the endpoint is OpenAI-official (or a faithful proxy) even if
+ *    model names don't match the sniff table (aliases, `ft:` fine-tunes).
+ *  - "compat": a generic OpenAI-compatible endpoint (DashScope, vLLM,
+ *    gateways…) — NEVER emit OpenAI-only params, regardless of model names.
+ *  Declaration beats sniffing (LiteLLM's provider prefix, Vercel's
+ *  createOpenAICompatible): hosts that know their endpoint say so. */
+export type ProviderDialect = "auto" | "openai" | "compat";
+
+/** True when OpenAI-official parameter semantics apply for this model+dialect. */
+function useOpenAISemantics(model: string, dialect: ProviderDialect = "auto"): boolean {
+  if (dialect === "compat") return false;
+  if (dialect === "openai") return true;
+  return isOpenAISeries(model);
+}
+
+export function mapRequest(req: ProviderRequest, dialect: ProviderDialect = "auto"): OpenAIChatParams {
   const { model, system, messages, tools, config } = req;
+  const oai = useOpenAISemantics(model, dialect);
 
   const out: OpenAIChatParams = {
     model,
@@ -53,7 +77,7 @@ export function mapRequest(req: ProviderRequest): OpenAIChatParams {
 
   // max_tokens vs max_completion_tokens: o-series / gpt-5 require the latter and
   // REJECT `max_tokens`; legacy models use `max_tokens`.
-  if (isOpenAISeries(model)) {
+  if (oai) {
     out.max_completion_tokens = config.maxTokens;
   } else {
     out.max_tokens = config.maxTokens;
@@ -77,18 +101,24 @@ export function mapRequest(req: ProviderRequest): OpenAIChatParams {
     out.tool_choice = mapToolChoice(config.toolChoice);
   }
 
-  if (config.temperature !== undefined) out.temperature = config.temperature;
-  if (config.topP !== undefined) out.top_p = config.topP;
+  // Sampling is REMOVED on reasoning models (o-series / gpt-5 reject
+  // temperature/top_p with a 400) — a MODEL property, not a dialect one:
+  // gpt-4o-class models keep sampling under dialect "openai" (ft: fine-tunes
+  // included), so the guard keys on the sniff table. Compat endpoints decide
+  // their own rules; params always pass through under "compat".
+  const reasoningSeries = dialect !== "compat" && isOpenAISeries(model);
+  if (config.temperature !== undefined && !reasoningSeries) out.temperature = config.temperature;
+  if (config.topP !== undefined && !reasoningSeries) out.top_p = config.topP;
   if (config.stopSequences && config.stopSequences.length > 0) out.stop = config.stopSequences;
 
   // o-series reasoning effort. OpenAI accepts low|medium|high|none only —
   // clamp core's extended scale (xhigh/max come from other providers).
-  if (config.effort && isOpenAISeries(model)) {
+  if (config.effort && oai) {
     out.reasoning_effort = config.effort === "xhigh" || config.effort === "max" ? "high" : config.effort;
   }
   // Explicit thinking disable on o-series/gpt-5 → reasoning_effort "none"
   // (gpt-5.1+). "adaptive" is the endpoint default — send nothing.
-  if (isOpenAISeries(model) && config.thinking?.type === "disabled") {
+  if (oai && config.thinking?.type === "disabled") {
     out.reasoning_effort = "none";
   }
 

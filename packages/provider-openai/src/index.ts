@@ -20,8 +20,8 @@ import type {
   StopReason,
   TokenUsage,
 } from "@lingjing-agent/core";
-import { fetchTransport, randomId } from "@lingjing-agent/core";
-import { mapRequest } from "./map-request.js";
+import { estimateMessagesTokens, fetchTransport, randomId } from "@lingjing-agent/core";
+import { mapRequest, type ProviderDialect } from "./map-request.js";
 import { mapStream } from "./map-stream.js";
 import { mapStop } from "./map-stop.js";
 import { mapUsage } from "./map-usage.js";
@@ -30,6 +30,7 @@ import { parseSSE } from "./sse.js";
 import type { ChatCompletion, ChatCompletionChunk, OpenAIChatParams } from "./types.js";
 
 export { mapRequest } from "./map-request.js";
+export type { ProviderDialect } from "./map-request.js";
 export { mapStream } from "./map-stream.js";
 export { mapStop } from "./map-stop.js";
 export { mapUsage } from "./map-usage.js";
@@ -49,6 +50,15 @@ export interface OpenAIProviderOptions {
   transport?: HttpTransport;
   /** Extra headers applied to every request (e.g. `OpenAI-Beta`, proxy auth). */
   headers?: Record<string, string>;
+  /** Wire dialect of the endpoint behind `baseURL` — declares how far the
+   *  OpenAI-official parameter extensions apply. `"auto"` (default) sniffs
+   *  model names; `"openai"` forces official semantics (aliases, `ft:`
+   *  fine-tunes the sniff table misses); `"compat"` never emits OpenAI-only
+   *  params (`max_completion_tokens` / `reasoning_effort`) — the right choice
+   *  for generic compatible endpoints (DashScope, vLLM, gateways) whatever
+   *  their model names look like. Vendor quirks beyond this (e.g. Qwen
+   *  `enable_thinking`) go through per-request `providerOptions.body`. */
+  dialect?: ProviderDialect;
 }
 
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
@@ -95,16 +105,18 @@ export class OpenAIProvider implements LLMProvider {
   private readonly baseURL: string;
   private readonly transport: HttpTransport;
   private readonly extraHeaders: Record<string, string> | undefined;
+  private readonly dialect: ProviderDialect;
 
   constructor(opts: OpenAIProviderOptions = {}) {
     this.apiKey = opts.apiKey;
     this.baseURL = (opts.baseURL ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
     this.transport = opts.transport ?? fetchTransport(opts.fetch);
     this.extraHeaders = opts.headers;
+    this.dialect = opts.dialect ?? "auto";
   }
 
   stream(req: ProviderRequest): AsyncIterable<ProviderChunk> {
-    const params = mapRequest(req);
+    const params = mapRequest(req, this.dialect);
     return this.runStream(params, req);
   }
 
@@ -117,7 +129,7 @@ export class OpenAIProvider implements LLMProvider {
 
   /** Non-streaming completion. Drains the model's single response into a Message. */
   async complete(req: ProviderRequest): Promise<ProviderResponse> {
-    const streaming = mapRequest(req);
+    const streaming = mapRequest(req, this.dialect);
     const params: OpenAIChatParams = { ...streaming, stream: false };
     delete (params as Partial<OpenAIChatParams>).stream_options;
     const response = await this.request(params, req, false);
@@ -165,21 +177,11 @@ export class OpenAIProvider implements LLMProvider {
     return { message: msg, stopReason, usage };
   }
 
-  /** Cheap char/4 token estimate (no tiktoken dep). Good enough for budget checks. */
+  /** CJK-aware heuristic estimate (shared with core — see core tokens.ts).
+   *  Good enough for budget checks and incremental deltas; absolute context
+   *  size comes from the usage anchor the loop maintains. */
   countTokens(messages: Message[], _model: string): Promise<number> {
-    let chars = 0;
-    for (const m of messages) {
-      if (typeof m.content === "string") {
-        chars += m.content.length;
-        continue;
-      }
-      for (const b of m.content) {
-        if (b.type === "text") chars += b.text.length;
-        else if (b.type === "tool_result")
-          chars += typeof b.content === "string" ? b.content.length : 0;
-      }
-    }
-    return Promise.resolve(Math.ceil(chars / 4));
+    return Promise.resolve(estimateMessagesTokens(messages));
   }
 
   private buildHeaders(req: ProviderRequest): Record<string, string> {
@@ -225,15 +227,39 @@ export class OpenAIProvider implements LLMProvider {
     const body = await drainText(response.body);
     const detail = body ? ` — ${body.slice(0, 300)}` : "";
     const overflow = response.status === 400 && body.includes("context_length_exceeded");
+    // Machine-readable codes so core can tier-fallback without parsing the
+    // message: 404 model_not_found (the model is gone) and bare 529 (some
+    // OpenAI-compatible gateways use it for overload).
+    let code: string | undefined = overflow ? "context_length_exceeded" : undefined;
+    if (code === undefined) {
+      const c = tryParseJson(body)?.error?.code;
+      if (c === "model_not_found" || (typeof c === "string" && c.includes("model_not_found"))) {
+        code = "model_not_found";
+      }
+    }
+    if (code === undefined && response.status === 529) code = "overloaded";
     const err = Object.assign(
       new Error(`OpenAI request failed: ${response.status} ${response.statusText}${detail}`),
       {
         status: response.status,
         headers: response.headers,
-        ...(overflow ? { code: "context_length_exceeded" } : {}),
+        ...(code !== undefined ? { code } : {}),
       },
     );
     return enrichError(err);
+  }
+}
+
+/** Best-effort JSON.parse of an error body; undefined on anything unparsable. */
+function tryParseJson(body: string): { error?: { type?: string; code?: string } } | undefined {
+  if (!body) return undefined;
+  try {
+    const parsed = JSON.parse(body);
+    return typeof parsed === "object" && parsed !== null
+      ? (parsed as { error?: { type?: string; code?: string } })
+      : undefined;
+  } catch {
+    return undefined;
   }
 }
 
