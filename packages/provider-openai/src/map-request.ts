@@ -112,13 +112,15 @@ export function mapRequest(req: ProviderRequest, dialect: ProviderDialect = "aut
   if (config.stopSequences && config.stopSequences.length > 0) out.stop = config.stopSequences;
 
   // o-series reasoning effort. OpenAI accepts low|medium|high|none only —
-  // clamp core's extended scale (xhigh/max come from other providers).
-  if (config.effort && oai) {
+  // clamp core's extended scale (xhigh/max come from other providers). A
+  // reasoning-model param: keyed on the series sniff, same as sampling —
+  // emitting it for gpt-4o-class under dialect "openai" would 400 every call.
+  if (config.effort && reasoningSeries) {
     out.reasoning_effort = config.effort === "xhigh" || config.effort === "max" ? "high" : config.effort;
   }
   // Explicit thinking disable on o-series/gpt-5 → reasoning_effort "none"
   // (gpt-5.1+). "adaptive" is the endpoint default — send nothing.
-  if (oai && config.thinking?.type === "disabled") {
+  if (reasoningSeries && config.thinking?.type === "disabled") {
     out.reasoning_effort = "none";
   }
 

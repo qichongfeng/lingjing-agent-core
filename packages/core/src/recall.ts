@@ -408,6 +408,12 @@ export function createRecallStore(opts: RecallStoreOptions): RecallStore {
     load: (conversationId) => store.load(conversationId),
     append: async (conversationId, messages) => {
       await store.append(conversationId, messages);
+      // Mark known HERE, not just in reconcile: a conversation indexed via
+      // append but deleted from the store before any recall would otherwise
+      // never enter `known`, and reconcile's delete-detection loop (which
+      // iterates known only) would drop its docs on no recall — the deleted
+      // conversation would keep matching queries forever.
+      known.add(conversationId);
       await enqueue(() => indexMessages(conversationId, messages));
     },
     recall,

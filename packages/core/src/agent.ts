@@ -313,12 +313,25 @@ export function createAgent(config: AgentConfig): Agent {
       const loaded: Message[] = [...(await memory.load(conversationId))];
       const loadedIds = new Set(loaded.map((m) => m.id));
       const history = materializeCompactedView(loaded);
+      // Crash-safe parity with send() (persistRuns): the input becomes durable
+      // BEFORE the extraction request — a kill mid-respond loses nothing that
+      // an identical kill during send() would not. Same dual filter as
+      // streamInto's fresh() keeps the run-end appends from double-writing.
+      const persistedIds = new Set<string>();
+      const persist =
+        config.persistRuns === true
+          ? async (msgs: Message[]): Promise<void> => {
+              await memory.append(conversationId, msgs);
+              for (const m of msgs) persistedIds.add(m.id);
+            }
+          : undefined;
       if (typeof input === "string") {
         history.push(withRunId(userMessage(input, now), runId));
       } else {
         history.push(...input.map((m) => withRunId(m, runId)));
       }
       try {
+        if (persist) await persist(history.filter((m) => !loadedIds.has(m.id)));
         const r = await runStructured({
           provider: config.provider,
           model: opts.model ?? defaultModel,
@@ -338,13 +351,13 @@ export function createAgent(config: AgentConfig): Agent {
         const assistant = withRunId(withTurnMeta(r.message, r.usage, "tool_use"), runId);
         const carrier = withRunId(r.carrier, runId);
         history.push(assistant, carrier);
-        await memory.append(conversationId, history.filter((m) => !loadedIds.has(m.id)));
+        await memory.append(conversationId, history.filter((m) => !loadedIds.has(m.id) && !persistedIds.has(m.id)));
         return r.data as T;
       } catch (err) {
         // Keep what the user really said (Claude parity with send's abort
         // path); the failed extraction attempt itself is never persisted.
         try {
-          const newMsgs = history.filter((m) => !loadedIds.has(m.id));
+          const newMsgs = history.filter((m) => !loadedIds.has(m.id) && !persistedIds.has(m.id));
           if (newMsgs.length > 0) await memory.append(conversationId, newMsgs);
         } catch {
           /* keep the original failure */
@@ -370,12 +383,31 @@ export function createAgent(config: AgentConfig): Agent {
     // an abort while waiting behaves exactly like an abort before start (the
     // run persists its input, emits error, rejects done).
     const done: Promise<Message> = enqueueConversation(conversationId, async () => {
+      // A failure BEFORE runLoop starts (store load, the durable persist of
+      // the input) must still terminate the events stream — runLoop owns
+      // error events once it runs; without this, an events-only consumer
+      // hangs forever on a queue that never closes.
+      const failBeforeLoop = (err: unknown): never => {
+        queue.push({
+          type: "error", conversationId, turn: 0, ts: now(),
+          message: `Failed before the run started: ${err instanceof Error ? err.message : String(err)}`,
+          code: "memory_error", recoverable: true,
+        });
+        queue.close();
+        throw err instanceof Error ? err : new Error(String(err));
+      };
       // Run id: groups everything this stream appends (input, assistant turns,
       // tool-result carriers, hook injects) into one exchange for groupExchanges().
       const runId = randomId();
       // Load history from the memory store (default InMemoryStore = in-process).
       // Copy so runLoop's in-place mutations don't leak into the store until append().
-      const loaded: Message[] = [...(await memory.load(conversationId))];
+      let loaded: Message[];
+      try {
+        loaded = [...(await memory.load(conversationId))];
+      } catch (err) {
+        failBeforeLoop(err);
+        throw err; // unreachable (failBeforeLoop throws) — closes definite-assignment analysis
+      }
       // Track loaded message ids so append persists only what THIS stream added
       // (input + assistant turns + tool results) — robust against context.fit/compact
       // shortening history in place (a baseline array index would go stale after compaction).
@@ -403,12 +435,24 @@ export function createAgent(config: AgentConfig): Agent {
       if (typeof input === "string") {
         const m = withRunId(userMessage(input, now), runId);
         history.push(m);
-        if (persist) await persist([m]);
+        if (persist) {
+          try {
+            await persist([m]);
+          } catch (err) {
+            failBeforeLoop(err);
+          }
+        }
       } else {
         // Copy-on-write stamp: caller-owned Message objects are never mutated.
         const stamped = input.map((m) => withRunId(m, runId));
         history.push(...stamped);
-        if (persist) await persist(stamped);
+        if (persist) {
+          try {
+            await persist(stamped);
+          } catch (err) {
+            failBeforeLoop(err);
+          }
+        }
       }
 
       try {
@@ -433,15 +477,21 @@ export function createAgent(config: AgentConfig): Agent {
           conversationId,
           now,
           emit: (e) => queue.push(e),
-          // Persist what an in-run compaction drops, minus anything already in
-          // the store (loadedIds at run start, persistedIds for anything the
-          // incremental persistRuns path already made durable — same filter as
-          // fresh(), or those messages are appended TWICE) — the append-only
-          // contract: the store always keeps the verbatim originals, the note
-          // rides later.
-          persistDropped: (dropped) => {
+          // Persist what an in-run compaction drops or rewrites in place
+          // (loadedIds at run start, persistedIds for anything the incremental
+          // persistRuns path already made durable — same filter as fresh(), or
+          // those messages are appended TWICE) — the append-only contract: the
+          // store always keeps the verbatim originals, the note rides later.
+          // Recording the id ONLY after a durable append matters for same-id
+          // rewrites (microcompact stubs): fresh() then skips the stubbed
+          // copy, so the store keeps the verbatim original; a failed append
+          // leaves it unrecorded and the run-end batch still covers the id
+          // (degraded: the stub, which is today's behavior).
+          persistDropped: async (dropped) => {
             const notInStore = dropped.filter((m) => !loadedIds.has(m.id) && !persistedIds.has(m.id));
-            if (notInStore.length > 0) return memory.append(conversationId, notInStore);
+            if (notInStore.length === 0) return;
+            await memory.append(conversationId, notInStore);
+            for (const m of notInStore) persistedIds.add(m.id);
           },
           ...(persist ? { persist } : {}),
           ...(config.logger ? { logger: config.logger } : {}),
@@ -495,7 +545,24 @@ export function createAgent(config: AgentConfig): Agent {
 
     const done: Promise<Message> = enqueueConversation(conversationId, async () => {
       const runId = randomId();
-      const loaded: Message[] = [...(await memory.load(conversationId))];
+      // Same fail-before-loop contract as streamInto: a store failure here
+      // must still close the events stream (see streamInto's comment).
+      const failBeforeLoop = (err: unknown): never => {
+        queue.push({
+          type: "error", conversationId, turn: 0, ts: now(),
+          message: `Failed before the run started: ${err instanceof Error ? err.message : String(err)}`,
+          code: "memory_error", recoverable: true,
+        });
+        queue.close();
+        throw err instanceof Error ? err : new Error(String(err));
+      };
+      let loaded: Message[];
+      try {
+        loaded = [...(await memory.load(conversationId))];
+      } catch (err) {
+        failBeforeLoop(err);
+        throw err; // unreachable (failBeforeLoop throws) — closes definite-assignment analysis
+      }
       const loadedIds = new Set(loaded.map((m) => m.id));
       const history: Message[] = materializeCompactedView(loaded);
       const tail = inspectRunTail(history);
@@ -536,7 +603,11 @@ export function createAgent(config: AgentConfig): Agent {
         // verify before re-calling"), durably. Never blind re-execution.
         const carrier = interruptedToolCarrier(tail.message, tail.calls, now);
         history.push(carrier);
-        await memory.append(conversationId, [carrier]);
+        try {
+          await memory.append(conversationId, [carrier]);
+        } catch (err) {
+          failBeforeLoop(err);
+        }
         persistedIds.add(carrier.id);
       }
       // "continue": tail is a user message — drive the next turn.
@@ -563,10 +634,12 @@ export function createAgent(config: AgentConfig): Agent {
           conversationId,
           now,
           emit: (e) => queue.push(e),
-          persistDropped: (dropped) => {
-            // Same dual filter as fresh() — see streamInto's comment.
+          persistDropped: async (dropped) => {
+            // Same contract as streamInto's — see its comment there.
             const notInStore = dropped.filter((m) => !loadedIds.has(m.id) && !persistedIds.has(m.id));
-            if (notInStore.length > 0) return memory.append(conversationId, notInStore);
+            if (notInStore.length === 0) return;
+            await memory.append(conversationId, notInStore);
+            for (const m of notInStore) persistedIds.add(m.id);
           },
           ...(persist ? { persist } : {}),
           ...(config.logger ? { logger: config.logger } : {}),

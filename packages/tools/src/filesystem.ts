@@ -263,8 +263,9 @@ function fsFromRoot(root: DirHandle): Filesystem {
 					await dir.removeEntry(name);
 				}
 			} catch (err) {
-				const msg = err instanceof Error ? err.message : String(err);
-				if (/not ?found|could not be resolved/i.test(msg)) throw notFound(path);
+				// Same miss vocabulary as readFile/move (isMiss) — an inlined
+				// subset here would surface the same miss differently per op.
+				if (isMiss(err)) throw notFound(path);
 				throw err;
 			}
 		},

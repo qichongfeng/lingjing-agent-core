@@ -91,8 +91,8 @@ core 定义的接口:`(req) → { status, headers, body: AsyncIterable<Uint8Arra
 ## 开发
 ```bash
 pnpm install
-pnpm typecheck && pnpm test && pnpm check:purity   # 全绿:697 测试 / 47 文件
-# core 312 · tools 200 · mcp 111 · openai 48 · anthropic 26
+pnpm typecheck && pnpm test && pnpm check:purity   # 全绿:704 测试 / 47 文件
+# core 319 · tools 200 · mcp 111 · openai 48 · anthropic 26
 ```
 
 仓库**没有** lint / format 工具链(根 devDeps 只有 `@types/node` / `tsup` / `typescript` / `vitest`),运行时边界由 `scripts/check-runtime-purity.mjs` 把守。

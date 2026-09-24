@@ -719,6 +719,10 @@ describe("sampling guard for reasoning models", () => {
     expect(ft["temperature"]).toBe(0.7);
     expect(ft["top_p"]).toBe(0.9);
     expect(ft["max_completion_tokens"]).toBe(10); // param spelling still official
+    // reasoning-model-only params stay off for gpt-4o-class under "openai"
+    // (the API 400s them there) — keyed on the series, same as sampling.
+    const ftEffort = mapRequest(baseReq({ model: "ft:gpt-4o-2024-08-06:org:snap", config: { maxTokens: 10, effort: "high" } }), "openai") as unknown as Record<string, unknown>;
+    expect(ftEffort["reasoning_effort"]).toBeUndefined();
     // …while a declared-official reasoning model still drops sampling.
     const o3 = mapRequest(baseReq({ model: "o3-mini", config: { maxTokens: 10, temperature: 0.7, topP: 0.9 } }), "openai") as unknown as Record<string, unknown>;
     expect(o3["temperature"]).toBeUndefined();

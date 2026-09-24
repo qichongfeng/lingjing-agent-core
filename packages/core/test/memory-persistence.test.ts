@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   AbortError,
+  CompactContextManager,
   conversationUsage,
   createAgent,
   extractText,
@@ -455,4 +456,99 @@ describe("same-conversation send serialization", () => {
     expect(extractText(m1!)).toBe("a");
     expect(extractText(m2!)).toBe("b");
   }, 2000);
+});
+
+describe("pre-run store failures", () => {
+  test("a failing durable persist terminates the events stream (no hang) and emits memory_error", async () => {
+    const failing: MemoryStore = {
+      async load() {
+        return [];
+      },
+      async append() {
+        throw new Error("idb quota exceeded");
+      },
+    };
+    const agent = createAgent({
+      provider: scriptedProvider([textTurn("never reached")]),
+      model: "fake",
+      memory: failing,
+      persistRuns: true,
+    });
+    const handle = agent.stream("hi", { conversationId: "c" });
+    const events: AgentEvent[] = [];
+    // Terminates ONLY because the failure path closes the queue — before the
+    // fix this for-await hung forever while done rejected.
+    for await (const e of handle.events) events.push(e);
+    await expect(handle.done).rejects.toThrow("idb quota");
+    const err = events.find((e): e is Extract<AgentEvent, { type: "error" }> => e.type === "error");
+    expect(err?.code).toBe("memory_error");
+    expect(err?.recoverable).toBe(true);
+  }, 2000);
+
+  test("a failing store LOAD behaves the same — stream closes, done rejects", async () => {
+    const failing: MemoryStore = {
+      async load() {
+        throw new Error("store corrupt");
+      },
+      async append() {
+        return;
+      },
+    };
+    const agent = createAgent({
+      provider: scriptedProvider([textTurn("never reached")]),
+      model: "fake",
+      memory: failing,
+    });
+    const handle = agent.stream("hi", { conversationId: "c" });
+    const events: AgentEvent[] = [];
+    for await (const e of handle.events) events.push(e);
+    await expect(handle.done).rejects.toThrow("store corrupt");
+    expect(events.some((e) => e.type === "error")).toBe(true);
+  }, 2000);
+});
+
+describe("in-run microcompact keeps verbatim originals in the store", () => {
+  test("an old tool_result stubbed by fit persists VERBATIM, not the '[cleared]' marker", async () => {
+    const { store } = recordingStore();
+    const fat: Tool = {
+      name: "fat",
+      description: "returns a fat result",
+      inputSchema: { jsonSchema: { type: "object" } },
+      async execute() {
+        return { content: `F${"F".repeat(20000)}` };
+      },
+    };
+    const noop: Tool = {
+      name: "noop",
+      description: "returns ok",
+      inputSchema: { jsonSchema: { type: "object" } },
+      async execute() {
+        return { content: "ok" };
+      },
+    };
+    const agent = createAgent({
+      provider: scriptedProvider([
+        toolCallTurn("fat", {}),
+        toolCallTurn("noop", {}),
+        toolCallTurn("noop", {}),
+        toolCallTurn("noop", {}),
+        toolCallTurn("noop", {}),
+        textTurn("done"),
+      ]),
+      model: "fake",
+      memory: store,
+      tools: [fat, noop],
+      maxTurns: 10,
+      // Small budget + a fat tool_result that ages into the head region → the
+      // turn-5 fit microcompacts (stubs) it under the SAME message id.
+      context: new CompactContextManager({ provider: scriptedProvider([]), model: "fake" }),
+      contextTokenBudget: 400,
+    });
+    await drain(agent.stream("go", { conversationId: "c" }));
+
+    const msgs = await store.load("c");
+    const fatCarrier = msgs.find((m) => JSON.stringify(m.content).includes("FFFF"));
+    expect(fatCarrier).toBeDefined(); // the verbatim fat result reached the store…
+    expect(JSON.stringify(msgs)).not.toContain("cleared for context"); // …the stub never replaced it
+  });
 });

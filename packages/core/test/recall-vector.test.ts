@@ -204,6 +204,14 @@ describe("createVectorRecallStore", () => {
     expect(out.some((s) => s.messageId === "m3")).toBe(true);
     expect(n).toBe(4); // m1+m2 (first pass) + m3 + this query — no re-embedding
   });
+
+  test("a conversation deleted between append and the FIRST recall stops matching", async () => {
+    const store = new DeletableStore();
+    const mem = createVectorRecallStore({ store, embed: hashEmbed });
+    await mem.append("c1", [msg("user", "被删除会话的独有内容", "m1")]);
+    store.remove("c1");
+    expect(await mem.recall("独有内容")).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -211,6 +219,30 @@ describe("createVectorRecallStore", () => {
 // ---------------------------------------------------------------------------
 
 describe("createVectorRecallStore — persistIndex", () => {
+  test("a clean recall does not rewrite the persisted index (dirty-flag saves)", async () => {
+    let saves = 0;
+    let savedIdx: SavedVectorIndex | undefined;
+    const store = new InMemoryStore();
+    const mem = createVectorRecallStore({
+      store,
+      embed: hashEmbed,
+      persistIndex: {
+        load: async () => undefined,
+        save: async (idx) => {
+          saves += 1;
+          savedIdx = idx;
+        },
+      },
+    });
+    await store.append("c1", [msg("user", "只写一次的内容", "m1")]);
+    await mem.recall("内容"); // build → exactly one save
+    const afterFirst = saves;
+    expect(savedIdx?.docs.length).toBe(1);
+    await mem.recall("内容"); // nothing changed…
+    await mem.recall("内容"); // …on repeated read-only recalls either
+    expect(saves).toBe(afterFirst);
+  });
+
   test("a reboot reuses saved vectors instead of re-embedding", async () => {
     let savedIdx: SavedVectorIndex | undefined;
     const store = new InMemoryStore();

@@ -105,6 +105,11 @@ export function createVectorRecallStore(opts: VectorRecallStoreOptions): VectorR
   const indexedKeys = new Set<string>();
   const known = new Set<string>();
   let docCount = 0;
+  // Index-change flag: persistSave rebuilds and writes the FULL index (every
+  // doc's text + vector), so it must not run on read-only recalls — a few
+  // thousand docs means multi-MB serialization per turn forever. Set by every
+  // mutation (index/drop/clear), cleared by a completed save.
+  let dirty = false;
 
   // Saved-index reuse: (conversationId, messageId) → the embedded text +
   // vector. Drained into the live docs as indexing dispatches it (a live doc
@@ -163,6 +168,7 @@ export function createVectorRecallStore(opts: VectorRecallStoreOptions): VectorR
       saved.set(key, { text: capped, vector });
       indexedKeys.add(key);
       docCount++;
+      dirty = true;
       let docs = docsByConversation.get(conversationId);
       if (!docs) {
         docs = [];
@@ -183,6 +189,7 @@ export function createVectorRecallStore(opts: VectorRecallStoreOptions): VectorR
     }
     docCount -= docs.length;
     docsByConversation.delete(conversationId);
+    dirty = true;
   }
 
   function clearIndex(): void {
@@ -191,6 +198,7 @@ export function createVectorRecallStore(opts: VectorRecallStoreOptions): VectorR
     known.clear();
     saved.clear();
     docCount = 0;
+    dirty = true;
   }
 
   function persistSave(): void {
@@ -265,7 +273,10 @@ export function createVectorRecallStore(opts: VectorRecallStoreOptions): VectorR
     await enqueue(async () => {
       await loadSaved();
       await reconcile(signal);
-      persistSave();
+      if (dirty) {
+        persistSave();
+        dirty = false;
+      }
     });
     // The build is the expensive step (an embed per message), so a cancelled
     // run must short-circuit after it rather than pay for scoring.
@@ -305,6 +316,10 @@ export function createVectorRecallStore(opts: VectorRecallStoreOptions): VectorR
     load: (conversationId) => store.load(conversationId),
     append: async (conversationId, messages) => {
       await store.append(conversationId, messages);
+      // Mark known HERE as well as in reconcile — same reason as the lexical
+      // backend: an append-indexed conversation deleted before any recall
+      // must still be visible to reconcile's delete-detection loop.
+      known.add(conversationId);
       await enqueue(() => indexMessages(conversationId, messages));
     },
     recall,
@@ -312,6 +327,7 @@ export function createVectorRecallStore(opts: VectorRecallStoreOptions): VectorR
       void enqueue(async () => {
         clearIndex();
         persistSave(); // a reboot must not resurrect a deliberately reset index
+        dirty = false;
       });
     },
   };

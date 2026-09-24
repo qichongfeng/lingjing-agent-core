@@ -650,22 +650,33 @@ async function persistAppend(opts: LoopOptions, msgs: Message[]): Promise<void> 
  *  the compacted view drops to opts.persistDropped — the store must keep the
  *  verbatim originals for the append-only contract (the note alone is NOT the
  *  archive: hosts render full transcripts from the store, and the next load
- *  re-derives the compacted view from the note's coveredUntil stamp). Dropped
- *  messages already in the store are the host callback's job to skip (it knows
- *  loadedIds); here we only guarantee best-effort — a persistence failure must
- *  not break the run, the degraded outcome is today's behavior (originals
- *  absent from the store), not a crash. */
+ *  re-derives the compacted view from the note's coveredUntil stamp).
+ *  REWRITTEN-in-place messages count as dropped too: microcompact stubs a fat
+ *  old tool_result under the SAME id (same id, new object), and without this
+ *  the run-end batch would persist the "[cleared for context]" stub as the
+ *  only copy — the verbatim output would be lost from the store forever. The
+ *  identity diff (same id, different object) hands the ORIGINAL object over;
+ *  unchanged messages keep their reference through every manager (managers
+ *  only rebuild the objects they touch). Dropped/rewritten messages already
+ *  in the store are the host callback's job to skip (it knows loadedIds and
+ *  what it persisted); here we only guarantee best-effort — a persistence
+ *  failure must not break the run, the degraded outcome is today's behavior
+ *  (originals absent from the store), not a crash. */
 async function persistDropped(
   before: Message[],
   after: Message[],
   opts: LoopOptions,
 ): Promise<void> {
   if (!opts.persistDropped) return;
-  const kept = new Set(after.map((m) => m.id));
-  const dropped = before.filter((m) => !kept.has(m.id));
-  if (dropped.length === 0) return;
+  // Identity diff, not id diff: a before-message whose OBJECT is absent from
+  // the after-view either left entirely (summarize dropped it) or was rebuilt
+  // in place (microcompact stub) — in both cases the store should keep the
+  // original we still hold here.
+  const keptRefs = new Set(after);
+  const leaving = before.filter((m) => !keptRefs.has(m));
+  if (leaving.length === 0) return;
   try {
-    await opts.persistDropped(dropped);
+    await opts.persistDropped(leaving);
   } catch {
     /* degraded: run continues without the originals in the store */
   }

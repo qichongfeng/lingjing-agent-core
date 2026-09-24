@@ -56,6 +56,21 @@ describe("agent.respond", () => {
     expect(usage.inputTokens).toBeGreaterThan(0);
   });
 
+  test("persistRuns: input durable before the request; success appends nothing twice", async () => {
+    const store = new InMemoryStore();
+    const provider = scriptedProvider([toolCallTurn("respond", { answer: 7 })]);
+    const agent = createAgent({ provider, model: "fake", memory: store, persistRuns: true });
+    const data = await agent.respond<{ answer: number }>("extract me", {
+      conversationId: "s-pr", schema: NUMBER_SCHEMA,
+    });
+    expect(data).toEqual({ answer: 7 });
+    const persisted = await store.load("s-pr");
+    // input + assistant(respond) + carrier — the pre-persisted input must not
+    // be appended again by the success path (same dual filter as send()).
+    expect(persisted.length).toBe(3);
+    expect(persisted.filter((m) => m.content === "extract me").length).toBe(1);
+  });
+
   test("schema violation → one corrective retry → success; only the final attempt persists", async () => {
     const store = new InMemoryStore();
     const provider = scriptedProvider([

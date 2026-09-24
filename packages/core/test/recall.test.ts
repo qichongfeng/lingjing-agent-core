@@ -189,6 +189,17 @@ describe("createRecallStore", () => {
     expect(await recall.recall("needs")).toEqual([]);
   });
 
+  test("a conversation deleted between append and the FIRST recall stops matching", async () => {
+    // append() indexes immediately but historically never entered `known` —
+    // reconcile's delete-detection loop only iterates known, so a deletion in
+    // that window left the docs matchable forever.
+    const store = new SpyStore();
+    const recall = createRecallStore({ store });
+    await recall.append("c1", [msg("user", "the deleted conversation's unique codeword", "m1")]);
+    store.remove("c1");
+    expect(await recall.recall("unique codeword")).toEqual([]);
+  });
+
   test("a store without list() still recalls what flows through append", async () => {
     const store = new NoListStore();
     const recall = createRecallStore({ store });
