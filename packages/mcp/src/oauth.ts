@@ -46,6 +46,11 @@ export interface McpOAuthConfig {
   /** Host-provided interactive step: receives the authorization URL, resolves
    *  with the redirect URL the user landed on (carries `code`). */
   authorize?: (authorizationUrl: string) => Promise<string>;
+  /** Redirect URI for the authorization-code flow. Default loopback
+   *  `http://127.0.0.1/callback` (CLI hosts with a local listener); browser
+   *  hosts pass their https landing page — registered verbatim with DCR and
+   *  sent at authorize/exchange, so it must match exactly on both sides. */
+  redirectUri?: string;
   /** Underlying HttpTransport for discovery/DCR/token requests. Default fetchTransport(). */
   transport?: HttpTransport;
 }
@@ -311,8 +316,8 @@ export class OAuthSession {
   }
 
   private redirectUri(): string {
-    // Default loopback; hosts with a custom scheme may override via a future config field.
-    return "http://127.0.0.1/callback";
+    // Default loopback (CLI hosts); browser hosts override via config.redirectUri.
+    return this.config.redirectUri ?? "http://127.0.0.1/callback";
   }
 }
 
