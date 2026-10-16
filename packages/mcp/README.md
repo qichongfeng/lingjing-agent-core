@@ -136,10 +136,7 @@ const session = await createMcpTools({
     store: idbTokenStore,        // optional — persistence backend override
                                  // (default: localStorage; pass IndexedDB,
                                  // in-memory, … to control where tokens live
-                                 // while keeping the popup dance and seeding)
-    seed: () => appPairedToken, // optional — a credential the app already holds,
-                                 // used as the first refresh token (zero-interaction
-                                 // first use when the server accepts it)
+                                 // while keeping the popup dance)
   }),
 });
 ```

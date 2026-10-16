@@ -45,29 +45,6 @@ function localStorageStore(): TokenStore {
   };
 }
 
-/** Wrap a base store with seed-on-miss: when the base has nothing, `seed`
- *  runs and a yielded credential is presented in the silent-first-refresh
- *  shape (the session immediately refreshes with it instead of running the
- *  interactive dance — provided the server's refresh grant accepts it).
- *  Seeding composes with any backend; no seed returns the base untouched. */
-function withSeedOnMiss(base: TokenStore, seed?: () => string | undefined): TokenStore {
-  if (!seed) return base;
-  return {
-    async get(key) {
-      const stored = await base.get(key);
-      if (stored) return stored;
-      const credential = seed();
-      return credential ? { accessToken: "", refreshToken: credential, expiresAt: 0 } : undefined;
-    },
-    async set(key, tokens) {
-      await base.set(key, tokens);
-    },
-    async clear(key) {
-      await base.clear(key);
-    },
-  };
-}
-
 /** The interactive step the core OAuth flow delegates to the host: open the
  *  authorization URL in a popup (user confirms there), resolve with the URL
  *  of the redirect landing page (carries `code`). Manual popup close = abort.
@@ -116,11 +93,10 @@ async function openAuthorizePopup(authUrl: string): Promise<string> {
 
 /** Assemble the browser-host auth config. `redirectUri` is the host's landing
  *  page (must match what the server has registered / what DCR will register);
- *  `seed` optionally reuses a credential the host already holds; `key` is
- *  optional — omit it and the session's own default (`mcp:` + server url)
- *  applies; `store` optionally swaps the persistence backend (default:
+ *  `key` is optional — omit it and the session's own default (`mcp:` + server
+ *  url) applies; `store` optionally swaps the persistence backend (default:
  *  localStorage — pass IndexedDB, in-memory, … to control where tokens live
- *  while keeping the popup dance and seeding). */
+ *  while keeping the popup dance). */
 export function browserOAuth(opts: {
   /** Authorization-server issuer (discovery + DCR base). */
   server: string;
@@ -128,14 +104,12 @@ export function browserOAuth(opts: {
   redirectUri: string;
   /** TokenStore key override; defaults to the session's `mcp:` + server url. */
   key?: string;
-  /** Existing credential to seed the store with (silent first refresh). */
-  seed?: () => string | undefined;
   /** Persistence backend override; defaults to localStorage. */
   store?: TokenStore;
 }): McpOAuthConfig {
   return {
     authorizationServer: opts.server,
-    tokenStore: withSeedOnMiss(opts.store ?? localStorageStore(), opts.seed),
+    tokenStore: opts.store ?? localStorageStore(),
     ...(opts.key !== undefined ? { key: opts.key } : {}),
     redirectUri: opts.redirectUri,
     authorize: openAuthorizePopup,

@@ -43,33 +43,12 @@ describe("browserOAuth config", () => {
 });
 
 describe("localStorage TokenStore", () => {
-  it("seeds from the host credential on a cache miss (silent-first-refresh shape)", async () => {
-    vi.stubGlobal("localStorage", fakeLocalStorage());
-    const cfg = browserOAuth({ server: "s", key: "k", redirectUri: "r", seed: () => "widget-token" });
-    expect(await cfg.tokenStore!.get("k")).toEqual({
-      accessToken: "",
-      refreshToken: "widget-token",
-      expiresAt: 0,
-    });
-  });
-
-  it("stored tokens win over the seed; a corrupt entry falls back to it", async () => {
+  it("returns undefined when nothing is stored or the entry is corrupt", async () => {
     const ls = fakeLocalStorage();
     vi.stubGlobal("localStorage", ls);
-    const cfg = browserOAuth({ server: "s", key: "k", redirectUri: "r", seed: () => "widget-token" });
-    await cfg.tokenStore!.set("k", { accessToken: "a", refreshToken: "r2" });
-    expect(await cfg.tokenStore!.get("k")).toEqual({ accessToken: "a", refreshToken: "r2" });
-    ls.dump.set("k", "{not json");
-    expect(await cfg.tokenStore!.get("k")).toEqual({
-      accessToken: "",
-      refreshToken: "widget-token",
-      expiresAt: 0,
-    });
-  });
-
-  it("returns undefined when nothing is stored and there is no seed", async () => {
-    vi.stubGlobal("localStorage", fakeLocalStorage());
     const cfg = browserOAuth({ server: "s", key: "k", redirectUri: "r" });
+    expect(await cfg.tokenStore!.get("k")).toBeUndefined();
+    ls.dump.set("k", "{not json");
     expect(await cfg.tokenStore!.get("k")).toBeUndefined();
   });
 
@@ -110,14 +89,6 @@ describe("store override", () => {
     expect(data.get("k")).toEqual({ accessToken: "a" });
     expect(await cfg.tokenStore!.get("k")).toEqual({ accessToken: "a" });
     expect(ls.dump.size).toBe(0); // localStorage never touched
-  });
-
-  it("seeding composes with a custom backend — miss seeds, hit wins", async () => {
-    const { store } = memStore();
-    const cfg = browserOAuth({ server: "s", redirectUri: "r", store, seed: () => "cred" });
-    expect(await cfg.tokenStore!.get("k")).toEqual({ accessToken: "", refreshToken: "cred", expiresAt: 0 });
-    await cfg.tokenStore!.set("k", { accessToken: "a" });
-    expect(await cfg.tokenStore!.get("k")).toEqual({ accessToken: "a" });
   });
 });
 
