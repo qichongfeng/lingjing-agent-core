@@ -16,8 +16,9 @@ const OAUTH_CALLBACK_MESSAGE = "lingjing-agent/mcp:oauth-callback";
 /** localStorage-backed TokenStore. `seed` runs on a cache miss: returning a
  *  credential the host already holds (e.g. a paired token) makes the first
  *  acquire a silent refresh instead of the interactive dance — provided the
- *  server's refresh grant accepts it. */
-function storeWithSeed(key: string, seed?: () => string | undefined): TokenStore {
+ *  server's refresh grant accepts it. Keys arrive resolved from the session
+ *  (its `key`, or the `mcp:` + url default when the host omits one). */
+function storeWithSeed(seed?: () => string | undefined): TokenStore {
   return {
     async get(k) {
       try {
@@ -94,21 +95,24 @@ async function openAuthorizePopup(authUrl: string): Promise<string> {
 
 /** Assemble the browser-host auth config. `redirectUri` is the host's landing
  *  page (must match what the server has registered / what DCR will register);
- *  `seed` optionally reuses a credential the host already holds. */
+ *  `seed` optionally reuses a credential the host already holds. `key` is
+ *  optional — omit it and the session's own default (`mcp:` + server url)
+ *  applies; override only for host-specific storage partitioning (e.g. per
+ *  account). */
 export function browserOAuth(opts: {
   /** Authorization-server issuer (discovery + DCR base). */
   server: string;
-  /** TokenStore key for this server. */
-  key: string;
   /** The host's https landing page the authorization code redirects to. */
   redirectUri: string;
+  /** TokenStore key override; defaults to the session's `mcp:` + server url. */
+  key?: string;
   /** Existing credential to seed the store with (silent first refresh). */
   seed?: () => string | undefined;
 }): McpOAuthConfig {
   return {
     authorizationServer: opts.server,
-    tokenStore: storeWithSeed(opts.key, opts.seed),
-    key: opts.key,
+    tokenStore: storeWithSeed(opts.seed),
+    ...(opts.key !== undefined ? { key: opts.key } : {}),
     redirectUri: opts.redirectUri,
     authorize: openAuthorizePopup,
   };

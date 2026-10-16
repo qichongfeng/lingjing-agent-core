@@ -130,8 +130,9 @@ const session = await createMcpTools({
   url: "https://mcp-host/mcp",
   auth: browserOAuth({
     server: "https://mcp-host",
-    key: "mcp:cloud",
     redirectUri: `${location.origin}/mcp/callback`,
+    // key is optional — the session defaults to `mcp:` + server url; override
+    // only for host-specific storage partitioning
     seed: () => appPairedToken, // optional — a credential the app already holds,
                                  // used as the first refresh token (zero-interaction
                                  // first use when the server accepts it)

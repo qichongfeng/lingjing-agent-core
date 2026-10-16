@@ -34,6 +34,11 @@ describe("browserOAuth config", () => {
     expect(typeof cfg.authorize).toBe("function");
     expect(cfg.tokenStore).toBeDefined();
   });
+
+  it("key is optional — omitted, the session's `mcp:` + url default applies", () => {
+    const cfg = browserOAuth({ server: "https://as", redirectUri: "https://app/cb" });
+    expect(cfg.key).toBeUndefined();
+  });
 });
 
 describe("localStorage TokenStore", () => {
