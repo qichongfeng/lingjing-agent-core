@@ -6,6 +6,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { browserOAuth, finishOAuthCallback } from "../src/browser/index.js";
+import type { OAuthTokens, TokenStore } from "../src/oauth.js";
 
 /** The wire contract between the popup dance and the landing page — pinned
  *  here so an accidental rename breaks a test, not every host app. */
@@ -80,6 +81,43 @@ describe("localStorage TokenStore", () => {
     expect(ls.dump.get("k")).toBe('{"accessToken":"a","expiresAt":123}');
     await cfg.tokenStore!.clear("k");
     expect(ls.dump.has("k")).toBe(false);
+  });
+});
+
+describe("store override", () => {
+  function memStore() {
+    const data = new Map<string, OAuthTokens>();
+    const store: TokenStore = {
+      async get(k) {
+        return data.get(k);
+      },
+      async set(k, tokens) {
+        data.set(k, tokens);
+      },
+      async clear(k) {
+        data.delete(k);
+      },
+    };
+    return { store, data };
+  }
+
+  it("a custom backend replaces localStorage entirely", async () => {
+    const ls = fakeLocalStorage();
+    vi.stubGlobal("localStorage", ls);
+    const { store, data } = memStore();
+    const cfg = browserOAuth({ server: "s", redirectUri: "r", store });
+    await cfg.tokenStore!.set("k", { accessToken: "a" });
+    expect(data.get("k")).toEqual({ accessToken: "a" });
+    expect(await cfg.tokenStore!.get("k")).toEqual({ accessToken: "a" });
+    expect(ls.dump.size).toBe(0); // localStorage never touched
+  });
+
+  it("seeding composes with a custom backend — miss seeds, hit wins", async () => {
+    const { store } = memStore();
+    const cfg = browserOAuth({ server: "s", redirectUri: "r", store, seed: () => "cred" });
+    expect(await cfg.tokenStore!.get("k")).toEqual({ accessToken: "", refreshToken: "cred", expiresAt: 0 });
+    await cfg.tokenStore!.set("k", { accessToken: "a" });
+    expect(await cfg.tokenStore!.get("k")).toEqual({ accessToken: "a" });
   });
 });
 

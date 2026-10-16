@@ -13,12 +13,11 @@ import type { McpOAuthConfig, OAuthTokens, TokenStore } from "../oauth.js";
  *  page (finishOAuthCallback): same-origin, carries the full redirect URL. */
 const OAUTH_CALLBACK_MESSAGE = "lingjing-agent/mcp:oauth-callback";
 
-/** localStorage-backed TokenStore. `seed` runs on a cache miss: returning a
- *  credential the host already holds (e.g. a paired token) makes the first
- *  acquire a silent refresh instead of the interactive dance — provided the
- *  server's refresh grant accepts it. Keys arrive resolved from the session
- *  (its `key`, or the `mcp:` + url default when the host omits one). */
-function storeWithSeed(seed?: () => string | undefined): TokenStore {
+/** localStorage-backed TokenStore (the default browser persistence). Keys
+ *  arrive resolved from the session (its `key`, or the `mcp:` + url default
+ *  when the host omits one). A corrupt entry reads as missing; a failed write
+ *  (private mode) is non-fatal — OAuthSession's in-memory memo still works. */
+function localStorageStore(): TokenStore {
   return {
     async get(k) {
       try {
@@ -27,14 +26,13 @@ function storeWithSeed(seed?: () => string | undefined): TokenStore {
       } catch {
         /* corrupt entry — treat as missing */
       }
-      const seeded = seed?.();
-      return seeded ? { accessToken: "", refreshToken: seeded, expiresAt: 0 } : undefined;
+      return undefined;
     },
     async set(k, tokens) {
       try {
         localStorage.setItem(k, JSON.stringify(tokens));
       } catch {
-        /* private mode: OAuthSession's in-memory memo still works */
+        /* private mode — see doc comment */
       }
     },
     async clear(k) {
@@ -43,6 +41,29 @@ function storeWithSeed(seed?: () => string | undefined): TokenStore {
       } catch {
         /* same */
       }
+    },
+  };
+}
+
+/** Wrap a base store with seed-on-miss: when the base has nothing, `seed`
+ *  runs and a yielded credential is presented in the silent-first-refresh
+ *  shape (the session immediately refreshes with it instead of running the
+ *  interactive dance — provided the server's refresh grant accepts it).
+ *  Seeding composes with any backend; no seed returns the base untouched. */
+function withSeedOnMiss(base: TokenStore, seed?: () => string | undefined): TokenStore {
+  if (!seed) return base;
+  return {
+    async get(key) {
+      const stored = await base.get(key);
+      if (stored) return stored;
+      const credential = seed();
+      return credential ? { accessToken: "", refreshToken: credential, expiresAt: 0 } : undefined;
+    },
+    async set(key, tokens) {
+      await base.set(key, tokens);
+    },
+    async clear(key) {
+      await base.clear(key);
     },
   };
 }
@@ -95,10 +116,11 @@ async function openAuthorizePopup(authUrl: string): Promise<string> {
 
 /** Assemble the browser-host auth config. `redirectUri` is the host's landing
  *  page (must match what the server has registered / what DCR will register);
- *  `seed` optionally reuses a credential the host already holds. `key` is
+ *  `seed` optionally reuses a credential the host already holds; `key` is
  *  optional — omit it and the session's own default (`mcp:` + server url)
- *  applies; override only for host-specific storage partitioning (e.g. per
- *  account). */
+ *  applies; `store` optionally swaps the persistence backend (default:
+ *  localStorage — pass IndexedDB, in-memory, … to control where tokens live
+ *  while keeping the popup dance and seeding). */
 export function browserOAuth(opts: {
   /** Authorization-server issuer (discovery + DCR base). */
   server: string;
@@ -108,10 +130,12 @@ export function browserOAuth(opts: {
   key?: string;
   /** Existing credential to seed the store with (silent first refresh). */
   seed?: () => string | undefined;
+  /** Persistence backend override; defaults to localStorage. */
+  store?: TokenStore;
 }): McpOAuthConfig {
   return {
     authorizationServer: opts.server,
-    tokenStore: storeWithSeed(opts.seed),
+    tokenStore: withSeedOnMiss(opts.store ?? localStorageStore(), opts.seed),
     ...(opts.key !== undefined ? { key: opts.key } : {}),
     redirectUri: opts.redirectUri,
     authorize: openAuthorizePopup,
