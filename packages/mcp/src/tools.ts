@@ -59,8 +59,6 @@ export interface McpToolsOptions {
   requestTimeoutMs?: number;
   /** Per-call timeout stamped on every bridged Tool (Tool.timeoutMs). Default 120_000. */
   toolTimeoutMs?: number;
-  /** Override the tool-name prefix (defaults to sanitized `name`). */
-  toolNamePrefix?: string;
   /**
    * annotations.destructiveHint handling: "confirm" (default) → permissions.destructive
    * + requiresConfirmation; "skip" → neither.
@@ -214,7 +212,7 @@ export async function createMcpTools(opts: McpToolsOptions): Promise<McpToolsSes
     throw err;
   }
 
-  const prefix = sanitizeName(opts.toolNamePrefix ?? opts.name);
+  const prefix = sanitizeName(opts.name);
   const toolTimeoutMs = opts.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
   const destructivePolicy = opts.destructivePolicy ?? "confirm";
   const maxTools = opts.maxTools ?? DEFAULT_MAX_TOOLS;
