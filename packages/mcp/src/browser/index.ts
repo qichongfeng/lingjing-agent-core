@@ -49,16 +49,21 @@ function storeWithSeed(key: string, seed?: () => string | undefined): TokenStore
 /** The interactive step the core OAuth flow delegates to the host: open the
  *  authorization URL in a popup (user confirms there), resolve with the URL
  *  of the redirect landing page (carries `code`). Manual popup close = abort.
- *  Only same-origin messages with our contract type are accepted. */
-function openAuthorizePopup(authUrl: string): Promise<string> {
+ *  Only same-origin messages with our contract type are accepted, and — when
+ *  the authorization URL carries a state — only redirects whose state matches
+ *  (concurrent dances must not resolve each other). */
+async function openAuthorizePopup(authUrl: string): Promise<string> {
+  const expectedState = new URL(authUrl).searchParams.get("state") ?? "";
   const popup = window.open(authUrl, "mcp-oauth", "popup=yes,width=480,height=680");
+  // async fn: a blocked popup rejects (never a synchronous throw) — callers
+  // awaiting `authorize(...)` get uniform promise semantics
   if (!popup) throw new Error("authorization popup was blocked — allow popups and retry");
   return new Promise((resolve, reject) => {
     const cleanup = () => {
       clearInterval(watch);
       window.removeEventListener("message", onMessage);
       try {
-        popup.close();
+        popup.close()
       } catch {
         /* already closed */
       }
@@ -73,6 +78,13 @@ function openAuthorizePopup(authUrl: string): Promise<string> {
       if (event.origin !== window.location.origin) return;
       const data = event.data as { type?: string; url?: string } | null;
       if (data?.type !== OAUTH_CALLBACK_MESSAGE || typeof data.url !== "string") return;
+      let redirect: URL;
+      try {
+        redirect = new URL(data.url);
+      } catch {
+        return; // malformed — not our landing page
+      }
+      if (expectedState && redirect.searchParams.get("state") !== expectedState) return;
       cleanup();
       resolve(data.url);
     };

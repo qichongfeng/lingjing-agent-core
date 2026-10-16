@@ -115,6 +115,32 @@ const session = await createMcpTools({
 
 The transport injects `Authorization: Bearer <token>`, and on a `401` invalidates the access token only — the refresh grant runs first (the refresh token survives; rotation killed the access token, not the session), falling back to re-authorization only if that fails — then replays the request once, transparently. `TokenStore` is your persistence seam — keychain, a file, or in-memory.
 
+`redirectUri` overrides the default loopback redirect (`http://127.0.0.1/callback`, for CLI hosts with a local listener). Browser hosts pass their https landing page — it is registered verbatim with DCR and must match exactly at the authorize and exchange steps.
+
+## Browser hosts (OAuth popup dance)
+
+`@lingjing-agent/mcp/browser` is the browser half of the runtime split (symmetric to `/node`): the popup authorization dance, a localStorage `TokenStore`, and the landing-page callback — all generic host plumbing, so an SPA wires OAuth with configuration only:
+
+```ts
+import { createMcpTools } from "@lingjing-agent/mcp";
+import { browserOAuth } from "@lingjing-agent/mcp/browser";
+
+const session = await createMcpTools({
+  name: "cloud",
+  url: "https://mcp-host/mcp",
+  auth: browserOAuth({
+    server: "https://mcp-host",
+    key: "mcp:cloud",
+    redirectUri: `${location.origin}/mcp/callback`,
+    seed: () => appPairedToken, // optional — a credential the app already holds,
+                                 // used as the first refresh token (zero-interaction
+                                 // first use when the server accepts it)
+  }),
+});
+```
+
+Your landing route (the `redirectUri` target) calls `finishOAuthCallback()`: it hands the full redirect URL back to the opening window via `postMessage` (same-origin, contract type `lingjing-agent/mcp:oauth-callback`) and closes itself. A blocked popup rejects with an error; the user closing the popup aborts the flow; concurrent dances are correlated by the OAuth `state` parameter. `window`/`localStorage` are only touched inside functions — importing the subpath in another runtime is side-effect free.
+
 ## Low-level client
 
 For non-agent use, `McpClient` speaks the JSON-RPC directly (`connect` / `listTools` / `callTool` / `listResources` / `readResource` / `listPrompts` / `getPrompt` / `close`) over any `McpTransport`; `createHttpMcpTransport({ url, headers, transport, auth })` and `createStdioMcpTransport(...)` are the two built-in transports.

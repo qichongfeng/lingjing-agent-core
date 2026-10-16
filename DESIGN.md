@@ -132,7 +132,7 @@ const wxTransport: HttpTransport = (req) => new Promise((resolve, reject) => {
 - `core` 仅依赖（可选、类型擦除的）`zod`。
 - `provider-openai` 依赖 `core`（peer）——SDK-free，裸 `HttpTransport`（默认 `fetchTransport`）。
 - `provider-anthropic` 依赖 `core`（peer）——同样 SDK-free，自建 `map-*` + 本地 SSE 解析。
-- `tools` 依赖 `core`（peer）；主入口走 `HttpTransport`（跨端），`./node` 子入口额外用平台 API。`mcp` 同构（主入口跨端 + `./node` 用 stdio）。
+- `tools` 依赖 `core`（peer）；主入口走 `HttpTransport`（跨端），`./node` 子入口额外用平台 API。`mcp` 同构（主入口跨端 + `./node` 用 stdio + `./browser` 用弹窗/localStorage，OAuth 宿主件）。
 - **没有任何包反向依赖 provider 或 tools。** core 只 import 自己的接口；宿主负责组合。
 - （`host-next` 不在仓库内；设计见 §6，可按需自行实现。）
 
