@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { HttpTransport, HttpTransportRequest, HttpTransportResponse } from "@lingjing-agent/core";
 import { McpClient } from "../src/client.js";
 import { createHttpMcpTransport } from "../src/http-transport.js";
-import { OAuthSession, type OAuthTokens, type TokenStore } from "../src/oauth.js";
+import { OAuthSession, type McpOAuthConfig, type OAuthTokens, type TokenStore } from "../src/oauth.js";
 import { bodyOf } from "./helpers.js";
 
 function memStore(initial?: Record<string, OAuthTokens>): { store: TokenStore; data: Map<string, OAuthTokens> } {
@@ -237,6 +237,296 @@ describe("http transport — 401 replay", () => {
     const res = await c.callTool("x", {});
     expect(res.content[0]?.text).toBe("ok");
     expect(authorizations).toBe(1); // one authorize for the fresh token
+    await c.close();
+  });
+});
+
+// ---------- RFC 9728 protected-resource discovery ----------
+
+const PRM_PATH_URL = "https://srv/.well-known/oauth-protected-resource/mcp";
+const PRM_ROOT_URL = "https://srv/.well-known/oauth-protected-resource";
+const PRM = {
+  resource: "https://srv/mcp",
+  authorization_servers: ["https://idp"],
+  scopes_supported: ["prm-a", "prm-b"],
+};
+
+/** Scripted transport with selectable PRM availability (path-inserted / root
+ *  variants), plus the AS metadata / DCR / token endpoints discovery feeds. */
+function discoveryTransport(
+  opts: { path?: boolean; root?: boolean; prm?: Record<string, unknown> | null; tokenResult?: Record<string, unknown> } = {},
+): { t: HttpTransport; reqs: HttpTransportRequest[] } {
+  const prm = "prm" in opts ? opts.prm : PRM;
+  const reqs: HttpTransportRequest[] = [];
+  const t: HttpTransport = async (req) => {
+    reqs.push(req);
+    if (req.url === PRM_PATH_URL) return opts.path !== false && prm ? resp(200, prm) : resp(404, {});
+    if (req.url === PRM_ROOT_URL) return opts.root !== false && prm ? resp(200, prm) : resp(404, {});
+    if (req.url.endsWith("/.well-known/oauth-authorization-server")) return resp(200, METADATA);
+    if (req.url === METADATA.registration_endpoint) return resp(200, { client_id: "client-1" });
+    if (req.url === METADATA.token_endpoint) return resp(200, opts.tokenResult ?? { access_token: "at-1", expires_in: 3600 });
+    return resp(404, {});
+  };
+  return { t, reqs };
+}
+
+function urls(reqs: HttpTransportRequest[]): string[] {
+  return reqs.map((r) => r.url);
+}
+
+/** authorize stub: records the auth URL, completes the dance with a valid state. */
+function echoAuthorize(seen?: string[]): NonNullable<McpOAuthConfig["authorize"]> {
+  return async (url) => {
+    seen?.push(url);
+    const u = new URL(url);
+    return `http://127.0.0.1/callback?code=c&state=${u.searchParams.get("state")}`;
+  };
+}
+
+describe("OAuthSession — protected-resource discovery (RFC 9728)", () => {
+  it("challenge resource_metadata steers discovery — that URL only, no guessed well-knowns", async () => {
+    const { store } = memStore();
+    const reqs: HttpTransportRequest[] = [];
+    const t: HttpTransport = async (req) => {
+      reqs.push(req);
+      if (req.url === "https://custom/prm") return resp(200, PRM);
+      if (req.url.endsWith("/.well-known/oauth-authorization-server")) return resp(200, METADATA);
+      if (req.url === METADATA.registration_endpoint) return resp(200, { client_id: "client-1" });
+      if (req.url === METADATA.token_endpoint) return resp(200, { access_token: "at-1" });
+      return resp(404, {});
+    };
+    const s = new OAuthSession({ tokenStore: store, serverUrl: "https://srv/mcp", transport: t, authorize: echoAuthorize() }, "key");
+    s.noteUnauthorized(`Bearer resource_metadata="https://custom/prm", scope="bill"`);
+    await expect(s.getAccessToken()).resolves.toBe("at-1");
+    expect(urls(reqs)[0]).toBe("https://custom/prm");
+    expect(urls(reqs).some((u) => u.includes("oauth-protected-resource"))).toBe(false);
+  });
+
+  it("path-inserted 404 → root fallback wins; full request order pinned", async () => {
+    const { store } = memStore();
+    const { t, reqs } = discoveryTransport({ path: false, root: true });
+    const s = new OAuthSession({ tokenStore: store, serverUrl: "https://srv/mcp", transport: t, authorize: echoAuthorize() }, "key");
+    await expect(s.getAccessToken()).resolves.toBe("at-1");
+    expect(urls(reqs)).toEqual([PRM_PATH_URL, PRM_ROOT_URL, "https://idp/.well-known/oauth-authorization-server", METADATA.registration_endpoint, METADATA.token_endpoint]);
+  });
+
+  it("path-inserted hit → root never requested", async () => {
+    const { store } = memStore();
+    const { t, reqs } = discoveryTransport({ path: true, root: true });
+    const s = new OAuthSession({ tokenStore: store, serverUrl: "https://srv/mcp", transport: t, authorize: echoAuthorize() }, "key");
+    await expect(s.getAccessToken()).resolves.toBe("at-1");
+    expect(urls(reqs)[0]).toBe(PRM_PATH_URL);
+    expect(urls(reqs)).not.toContain(PRM_ROOT_URL);
+  });
+
+  it("challenge URL identical to the path-inserted candidate → fetched once, not twice", async () => {
+    const { store } = memStore();
+    const { t, reqs } = discoveryTransport({ path: true, root: true });
+    const s = new OAuthSession({ tokenStore: store, serverUrl: "https://srv/mcp", transport: t, authorize: echoAuthorize() }, "key");
+    s.noteUnauthorized(`Bearer resource_metadata="${PRM_PATH_URL}"`);
+    await expect(s.getAccessToken()).resolves.toBe("at-1");
+    expect(urls(reqs).filter((u) => u === PRM_PATH_URL)).toHaveLength(1);
+    expect(urls(reqs)).not.toContain(PRM_ROOT_URL);
+  });
+
+  it("all candidates fail, or neither serverUrl nor challenge → clear error", async () => {
+    const { t } = discoveryTransport({ path: false, root: false });
+    const s = new OAuthSession({ tokenStore: memStore().store, serverUrl: "https://srv/mcp", transport: t, authorize: echoAuthorize() }, "key");
+    await expect(s.getAccessToken()).rejects.toThrow(/Protected-resource discovery failed/);
+    const s2 = new OAuthSession({ tokenStore: memStore().store, transport: t, authorize: echoAuthorize() }, "key");
+    await expect(s2.getAccessToken()).rejects.toThrow(/`authorizationServer` or `serverUrl`/);
+  });
+
+  it("pre-configured authorizationServer → zero PRM requests", async () => {
+    const { store } = memStore();
+    const { t, reqs } = discoveryTransport({ path: true, root: true });
+    const s = new OAuthSession({ tokenStore: store, authorizationServer: "https://idp", transport: t, authorize: echoAuthorize() }, "key");
+    await expect(s.getAccessToken()).resolves.toBe("at-1");
+    expect(urls(reqs).some((u) => u.includes("oauth-protected-resource"))).toBe(false);
+  });
+
+  it("RFC 8707 resource: PRM resource on authorize + both grant bodies (discovered)", async () => {
+    const { store } = memStore();
+    const authUrls: string[] = [];
+    const { t, reqs } = discoveryTransport({ path: true, root: false, tokenResult: { access_token: "at-1", refresh_token: "rt-1", expires_in: 3600 } });
+    const s = new OAuthSession({ tokenStore: store, serverUrl: "https://srv/mcp", transport: t, authorize: echoAuthorize(authUrls) }, "key");
+    await expect(s.getAccessToken()).resolves.toBe("at-1");
+    expect(new URL(authUrls[0]!).searchParams.get("resource")).toBe("https://srv/mcp");
+    const codeBody = new URLSearchParams(reqs[reqs.length - 1]!.body as string);
+    expect(codeBody.get("grant_type")).toBe("authorization_code");
+    expect(codeBody.get("resource")).toBe("https://srv/mcp");
+    // Refresh grant carries it too.
+    await s.invalidateAccessToken();
+    await expect(s.getAccessToken()).resolves.toBe("at-1");
+    const refreshBody = new URLSearchParams(reqs[reqs.length - 1]!.body as string);
+    expect(refreshBody.get("grant_type")).toBe("refresh_token");
+    expect(refreshBody.get("resource")).toBe("https://srv/mcp");
+  });
+
+  it("RFC 8707 resource falls back to serverUrl when the issuer was pre-configured", async () => {
+    const { store } = memStore();
+    const authUrls: string[] = [];
+    const { t } = discoveryTransport({ path: true, root: true });
+    const s = new OAuthSession({ tokenStore: store, authorizationServer: "https://idp", serverUrl: "https://srv/mcp", transport: t, authorize: echoAuthorize(authUrls) }, "key");
+    await expect(s.getAccessToken()).resolves.toBe("at-1");
+    expect(new URL(authUrls[0]!).searchParams.get("resource")).toBe("https://srv/mcp");
+  });
+
+  it("scope selection: config wins → challenge → PRM scopes_supported → omitted", async () => {
+    // PRM scopes_supported (no challenge, no config).
+    const authUrls: string[] = [];
+    const s = new OAuthSession({ tokenStore: memStore().store, serverUrl: "https://srv/mcp", transport: discoveryTransport().t, authorize: echoAuthorize(authUrls) }, "key");
+    await s.getAccessToken();
+    expect(new URL(authUrls[0]!).searchParams.get("scope")).toBe("prm-a prm-b");
+
+    // Challenge scope outranks the PRM's.
+    const authUrls2: string[] = [];
+    const s2 = new OAuthSession({ tokenStore: memStore().store, serverUrl: "https://srv/mcp", transport: discoveryTransport().t, authorize: echoAuthorize(authUrls2) }, "key");
+    s2.noteUnauthorized(`Bearer scope="bill"`);
+    await s2.getAccessToken();
+    expect(new URL(authUrls2[0]!).searchParams.get("scope")).toBe("bill");
+
+    // Explicit config outranks everything.
+    const authUrls3: string[] = [];
+    const s3 = new OAuthSession({ tokenStore: memStore().store, serverUrl: "https://srv/mcp", scopes: ["cfg"], transport: discoveryTransport().t, authorize: echoAuthorize(authUrls3) }, "key");
+    s3.noteUnauthorized(`Bearer scope="bill"`);
+    await s3.getAccessToken();
+    expect(new URL(authUrls3[0]!).searchParams.get("scope")).toBe("cfg");
+
+    // Nothing anywhere → parameter omitted.
+    const authUrls4: string[] = [];
+    const s4 = new OAuthSession({ tokenStore: memStore().store, serverUrl: "https://srv/mcp", transport: discoveryTransport({ prm: { resource: "https://srv/mcp", authorization_servers: ["https://idp"] } }).t, authorize: echoAuthorize(authUrls4) }, "key");
+    await s4.getAccessToken();
+    expect(new URL(authUrls4[0]!).searchParams.has("scope")).toBe(false);
+  });
+});
+
+describe("OAuthSession — silentAccessToken (non-interactive best effort)", () => {
+  it("empty store → undefined; never touches the authorize callback", async () => {
+    let authorizations = 0;
+    const s = new OAuthSession({ tokenStore: memStore().store, transport: discoveryTransport().t, authorize: async () => { authorizations += 1; return "http://127.0.0.1/callback"; } }, "key");
+    await expect(s.silentAccessToken()).resolves.toBeUndefined();
+    expect(authorizations).toBe(0);
+  });
+
+  it("unexpired cached token → returned as-is, zero network", async () => {
+    const { store } = memStore({ key: { accessToken: "fresh", expiresAt: Date.now() + 60_000 } });
+    const { t, reqs } = discoveryTransport();
+    const s = new OAuthSession({ tokenStore: store, transport: t, authorize: echoAuthorize() }, "key");
+    await expect(s.silentAccessToken()).resolves.toBe("fresh");
+    expect(reqs).toHaveLength(0);
+  });
+
+  it("expired token + refresh token → one silent refresh; failed refresh → undefined, still no authorize", async () => {
+    const { store } = memStore({ key: { accessToken: "stale", refreshToken: "rt-1", expiresAt: Date.now() - 1_000 } });
+    const ok = discoveryTransport();
+    const s = new OAuthSession({ tokenStore: store, authorizationServer: "https://idp", transport: ok.t, authorize: echoAuthorize() }, "key");
+    await expect(s.silentAccessToken()).resolves.toBe("at-1");
+    expect(new URLSearchParams(ok.reqs[ok.reqs.length - 1]!.body as string).get("grant_type")).toBe("refresh_token");
+
+    const failing = discoveryTransport({ tokenResult: null as unknown as Record<string, unknown> });
+    const reqs: HttpTransportRequest[] = [];
+    const t: HttpTransport = async (req) => {
+      reqs.push(req);
+      if (req.url === METADATA.token_endpoint) return resp(400, { error: "invalid_grant" });
+      return failing.t(req);
+    };
+    const { store: s2store } = memStore({ key: { accessToken: "stale", refreshToken: "rt-1", expiresAt: Date.now() - 1_000 } });
+    let authorizations = 0;
+    const s2 = new OAuthSession({ tokenStore: s2store, authorizationServer: "https://idp", transport: t, authorize: async () => { authorizations += 1; return "http://127.0.0.1/callback"; } }, "key");
+    await expect(s2.silentAccessToken()).resolves.toBeUndefined();
+    expect(authorizations).toBe(0);
+  });
+});
+
+// ---------- http transport: lazy authorization + discovery, end to end ----------
+
+/** A successful MCP JSON-RPC response handler for the scripted server. */
+function mcpOk(req: HttpTransportRequest): HttpTransportResponse {
+  const body = JSON.parse(req.body ?? "{}") as { method?: string; id?: number };
+  if (req.method === "DELETE") return { status: 200, statusText: "OK", headers: {}, body: bodyOf("") };
+  if (body.id === undefined) return { status: 202, statusText: "Accepted", headers: {}, body: bodyOf("") };
+  if (body.method === "initialize") {
+    return resp(200, { jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "srv", version: "1" } } }, { "mcp-session-id": "s-1" });
+  }
+  return resp(200, { jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "ok" }] } });
+}
+
+describe("http transport — lazy authorization + discovery", () => {
+  it("unauthenticated first request → 401 challenge → PRM discovery → DCR → authorize → replay, transparently", async () => {
+    const { store } = memStore();
+    let authorizations = 0;
+    const reqs: HttpTransportRequest[] = [];
+    const t: HttpTransport = async (req) => {
+      reqs.push(req);
+      if (req.url === "https://srv/mcp") {
+        if (req.headers["authorization"] === "Bearer at-1") return mcpOk(req);
+        return resp(401, { error: "invalid_token" }, { "www-authenticate": `Bearer resource_metadata="${PRM_PATH_URL}", scope="bill"` });
+      }
+      if (req.url === PRM_PATH_URL) return resp(200, PRM);
+      if (req.url === PRM_ROOT_URL) return resp(404, {});
+      if (req.url.endsWith("/.well-known/oauth-authorization-server")) return resp(200, METADATA);
+      if (req.url === METADATA.registration_endpoint) return resp(200, { client_id: "c1" });
+      if (req.url === METADATA.token_endpoint) return resp(200, { access_token: "at-1", refresh_token: "rt-1", expires_in: 3600 });
+      return resp(404, {});
+    };
+    const mt = createHttpMcpTransport({
+      url: "https://srv/mcp",
+      transport: t,
+      auth: {
+        tokenStore: store,
+        transport: t,
+        authorize: async (url) => {
+          authorizations += 1;
+          return `http://127.0.0.1/callback?code=c&state=${new URL(url).searchParams.get("state")}`;
+        },
+      },
+    });
+
+    const c = new McpClient({ transport: mt, requestTimeoutMs: 2_000 });
+    await c.connect();
+    const res = await c.callTool("x", {});
+    expect(res.content[0]?.text).toBe("ok");
+
+    const mcpPosts = reqs.filter((r) => r.url === "https://srv/mcp" && r.method === "POST");
+    expect(mcpPosts[0]!.headers["authorization"]).toBeUndefined(); // bare request first
+    expect(mcpPosts.some((r) => r.headers["authorization"] === "Bearer at-1")).toBe(true);
+    expect(authorizations).toBe(1);
+    // Discovery: challenge URL (== path-inserted) fetched exactly once, root never needed.
+    expect(urls(reqs).filter((u) => u === PRM_PATH_URL)).toHaveLength(1);
+    expect(urls(reqs)).not.toContain(PRM_ROOT_URL);
+    await c.close();
+  });
+
+  it("auth configured but the server accepts unauthenticated → no authorize, no token traffic", async () => {
+    const { store } = memStore();
+    let authorizations = 0;
+    const reqs: HttpTransportRequest[] = [];
+    const t: HttpTransport = async (req) => {
+      reqs.push(req);
+      if (req.url === "https://srv/mcp") return mcpOk(req);
+      return resp(404, {}); // any OAuth endpoint hit would be a bug
+    };
+    const mt = createHttpMcpTransport({
+      url: "https://srv/mcp",
+      transport: t,
+      auth: {
+        tokenStore: store,
+        transport: t,
+        authorize: async () => {
+          authorizations += 1;
+          return "http://127.0.0.1/callback?code=c&state=s";
+        },
+      },
+    });
+
+    const c = new McpClient({ transport: mt, requestTimeoutMs: 2_000 });
+    await c.connect();
+    const res = await c.callTool("x", {});
+    expect(res.content[0]?.text).toBe("ok");
+    expect(authorizations).toBe(0);
+    expect(urls(reqs).every((u) => u === "https://srv/mcp")).toBe(true);
+    expect(reqs.every((r) => r.headers["authorization"] === undefined)).toBe(true);
     await c.close();
   });
 });

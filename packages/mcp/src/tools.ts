@@ -113,8 +113,16 @@ function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** ToolResultValue + the server's structuredContent verbatim (no cap — the
+ * content-text mirror is the LLM-facing truncatable copy; `structured` is for
+ * host-side programmatic consumers, e.g. a mini-program's billId landing hook).
+ * Any JSON value per spec, not just an object (list_users → array). */
+export interface McpToolResultValue extends ToolResultValue {
+  structured?: unknown;
+}
+
 /** Map an MCP tools/call result into a core ToolResultValue. */
-function mapToolCallResult(res: McpToolCallResult): ToolResultValue {
+function mapToolCallResult(res: McpToolCallResult): McpToolResultValue {
   const parts: Content[] = [];
   for (const block of res.content) {
     if (block.type === "text" && block.text !== undefined) {
@@ -133,6 +141,13 @@ function mapToolCallResult(res: McpToolCallResult): ToolResultValue {
           text: `[resource ${r.uri}, ${r.mimeType ?? "unknown"}, ${r.blob?.length ?? 0} base64 chars — not inlined]`,
         });
       }
+    } else if (block.type === "resource_link" && block.uri !== undefined) {
+      // Link, not payload (no inline content to hand the LLM) — cite it the way
+      // core cites uninlined binary resources.
+      parts.push({
+        type: "text",
+        text: `[resource_link ${block.uri}${block.name === undefined ? "" : ` (${block.name})`}]`,
+      });
     }
   }
   if (res.structuredContent !== undefined) {
@@ -146,7 +161,13 @@ function mapToolCallResult(res: McpToolCallResult): ToolResultValue {
       : parts.every((p) => p.type === "text")
         ? parts.map((p) => (p as { type: "text"; text: string }).text).join("\n")
         : parts;
-  return { content, ...(res.isError === true && { isError: true }) };
+  return {
+    content,
+    ...(res.isError === true && { isError: true }),
+    // structuredContent verbatim at the top level — host wrappers read it off
+    // the execute() return value (core only consumes content/isError).
+    ...(res.structuredContent !== undefined && { structured: res.structuredContent }),
+  };
 }
 
 /** resources/read `contents` → core ToolResultValue. Images inline as base64;

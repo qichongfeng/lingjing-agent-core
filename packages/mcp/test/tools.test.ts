@@ -183,6 +183,30 @@ describe("tools/call result mapping", () => {
       expect: 'structured: {"ok":true}',
     },
     {
+      name: "structuredContent array (spec: any JSON value, e.g. list_users)",
+      answer: { content: [{ type: "text", text: "r" }], structuredContent: [{ id: "1" }, { id: "2" }] },
+      expect: 'r\nstructured: [{"id":"1"},{"id":"2"}]',
+    },
+    {
+      name: "structuredContent scalar null",
+      answer: { content: [], structuredContent: null },
+      expect: "structured: null",
+    },
+    {
+      name: "resource_link cited, not inlined",
+      answer: {
+        content: [
+          { type: "resource_link", uri: "file:///project/src/main.rs", name: "main.rs", mimeType: "text/x-rust" },
+        ],
+      },
+      expect: "[resource_link file:///project/src/main.rs (main.rs)]",
+    },
+    {
+      name: "resource_link without uri dropped",
+      answer: { content: [{ type: "resource_link", name: "orphan" }] },
+      expect: "[empty response]",
+    },
+    {
       name: "structuredContent truncated at 16 KiB",
       answer: { content: [], structuredContent: { blob: "x".repeat(20_000) } },
       expect: /"\[truncated\]"?|\[truncated\]/,
@@ -206,6 +230,29 @@ describe("tools/call result mapping", () => {
       await s.close();
     });
   }
+
+  // structuredContent rides the execute() return verbatim (uncapped) for
+  // host-side programmatic consumers — the content-text "structured:" line is
+  // the LLM-facing truncatable copy.
+  it("structuredContent exposed as top-level structured (object AND array)", async () => {
+    const t = scriptedServer(
+      [
+        { name: "probe", inputSchema: {} },
+        { name: "probe2", inputSchema: {} },
+      ],
+      (name) =>
+        name === "probe"
+          ? { content: [{ type: "text", text: "ok" }], structuredContent: { billId: "42" } }
+          : { content: [{ type: "text", text: "2 users" }], structuredContent: [{ id: "1" }, { id: "2" }] },
+    );
+    const s = await createMcpTools({ name: "srv", transport: t });
+    const out = await s.tools[0]!.execute({}, testCtx());
+    expect((out as { structured?: unknown }).structured).toEqual({ billId: "42" });
+    expect(out.content).toBe('ok\nstructured: {"billId":"42"}');
+    const out2 = await s.tools[1]!.execute({}, testCtx());
+    expect((out2 as { structured?: unknown }).structured).toEqual([{ id: "1" }, { id: "2" }]);
+    await s.close();
+  });
 
   it("isError propagates; JSON-RPC error → one-line isError string; never throws", async () => {
     const t = scriptedServer(

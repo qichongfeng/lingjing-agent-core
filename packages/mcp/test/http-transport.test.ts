@@ -204,6 +204,17 @@ describe("errors", () => {
     await mt.close();
   });
 
+  it("a 401's WWW-Authenticate challenge rides along on McpHttpError (no auth config → no replay)", async () => {
+    const challenge = 'Bearer resource_metadata="https://srv/.well-known/oauth-protected-resource/mcp", scope="bill"';
+    const { t, reqs } = httpScript([
+      { status: 401, statusText: "Unauthorized", headers: { "www-authenticate": challenge }, body: bodyOf("{}") },
+    ]);
+    const mt = createHttpMcpTransport({ url: "https://srv/mcp", transport: t });
+    await expect(mt.send(CALL_REQ)).rejects.toMatchObject({ name: "McpHttpError", status: 401, wwwAuthenticate: challenge });
+    expect(reqs).toHaveLength(1); // no OAuth configured → single attempt, no replay
+    await mt.close();
+  });
+
   it("abort mid-SSE: the in-flight send rejects and body iteration stops", async () => {
     const ac = new AbortController();
     async function* hanging(): AsyncGenerator<Uint8Array> {

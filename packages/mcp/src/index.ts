@@ -13,7 +13,7 @@
 // transport and the server channel) lives in "@lingjing-agent/mcp/node".
 
 export { createMcpTools } from "./tools.js";
-export type { McpToolsOptions, McpToolsSession } from "./tools.js";
+export type { McpToolsOptions, McpToolsSession, McpToolResultValue } from "./tools.js";
 
 export { createMcpServer } from "./server.js";
 export type {

@@ -73,20 +73,30 @@ export interface McpToolDescriptor {
   description?: string;
   /** JSON Schema — passed through verbatim into core's Tool.inputSchema.jsonSchema. */
   inputSchema: Record<string, unknown>;
+  /** Optional output schema for structuredContent validation (spec: clients
+   * SHOULD validate; hosts may consume via listTools — the bridge itself does
+   * not, trusting first-party servers). */
+  outputSchema?: Record<string, unknown>;
   annotations?: McpToolAnnotations;
 }
 
 export interface McpToolContentBlock {
-  type: "text" | "image" | "audio" | "resource";
+  type: "text" | "image" | "audio" | "resource" | "resource_link";
   text?: string;
   data?: string;
   mimeType?: string;
   resource?: { uri: string; mimeType?: string; text?: string; blob?: string };
+  /** resource_link fields (2025-06-18+): a subscribable/fetchable URI, no inline payload. */
+  uri?: string;
+  name?: string;
+  description?: string;
 }
 
 export interface McpToolCallResult {
   content: McpToolContentBlock[];
-  structuredContent?: Record<string, unknown>;
+  /** Any JSON value per spec (object/array/scalar/null), NOT just an object —
+   * e.g. a list_users tool legitimately returns an array here. */
+  structuredContent?: unknown;
   isError?: boolean;
 }
 
@@ -711,6 +721,8 @@ export function asToolDescriptor(v: unknown): McpToolDescriptor | undefined {
   if (title !== undefined) out.title = title;
   const description = optString(r["description"]);
   if (description !== undefined) out.description = description;
+  const outputSchema = asRecord(r["outputSchema"]);
+  if (outputSchema !== undefined) out.outputSchema = outputSchema;
   const annotations = asAnnotations(r["annotations"]);
   if (annotations !== undefined) out.annotations = annotations;
   return out;
@@ -738,7 +750,7 @@ export function asToolCallResult(v: unknown): McpToolCallResult | undefined {
     const b = asRecord(c);
     const type = b === undefined ? undefined : optString(b["type"]);
     if (b === undefined || type === undefined) continue;
-    if (type !== "text" && type !== "image" && type !== "audio" && type !== "resource") continue;
+    if (type !== "text" && type !== "image" && type !== "audio" && type !== "resource" && type !== "resource_link") continue;
     const block: McpToolContentBlock = { type };
     const text = optString(b["text"]);
     if (text !== undefined) block.text = text;
@@ -747,9 +759,9 @@ export function asToolCallResult(v: unknown): McpToolCallResult | undefined {
     const mimeType = optString(b["mimeType"]);
     if (mimeType !== undefined) block.mimeType = mimeType;
     const resource = asRecord(b["resource"]);
-    const uri = resource === undefined ? undefined : optString(resource["uri"]);
-    if (resource !== undefined && uri !== undefined) {
-      const res: { uri: string; mimeType?: string; text?: string; blob?: string } = { uri };
+    const resUri = resource === undefined ? undefined : optString(resource["uri"]);
+    if (resource !== undefined && resUri !== undefined) {
+      const res: { uri: string; mimeType?: string; text?: string; blob?: string } = { uri: resUri };
       const rmime = optString(resource["mimeType"]);
       if (rmime !== undefined) res.mimeType = rmime;
       const rtext = optString(resource["text"]);
@@ -758,11 +770,21 @@ export function asToolCallResult(v: unknown): McpToolCallResult | undefined {
       if (rblob !== undefined) res.blob = rblob;
       block.resource = res;
     }
+    if (type === "resource_link") {
+      const linkUri = optString(b["uri"]);
+      if (linkUri === undefined) continue; // malformed link: no uri is nothing usable
+      block.uri = linkUri;
+      const name = optString(b["name"]);
+      if (name !== undefined) block.name = name;
+      const desc = optString(b["description"]);
+      if (desc !== undefined) block.description = desc;
+    }
     content.push(block);
   }
   const out: McpToolCallResult = { content };
-  const structured = asRecord(r["structuredContent"]);
-  if (structured !== undefined) out.structuredContent = structured;
+  // Any JSON value per spec — arrays/scalars/null are legal structuredContent,
+  // only the key's absence means "none" (JSON can never carry undefined).
+  if ("structuredContent" in r) out.structuredContent = r["structuredContent"];
   if (r["isError"] === true) out.isError = true;
   return out;
 }

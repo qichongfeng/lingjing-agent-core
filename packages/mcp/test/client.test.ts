@@ -178,6 +178,19 @@ describe("listTools", () => {
     await c.close();
   });
 
+  it("passes through outputSchema when a tool declares one", async () => {
+    const t = fakeMcpTransport();
+    const outputSchema = { type: "object", properties: { billId: { type: "string" } } };
+    respond(t, (req) => {
+      if (req.method === "initialize") return okResult();
+      return { tools: [{ name: "add_bill", inputSchema: { type: "object" }, outputSchema }] };
+    });
+    const c = new McpClient({ transport: t });
+    await c.connect();
+    expect((await c.listTools())[0]?.outputSchema).toEqual(outputSchema);
+    await c.close();
+  });
+
   it("guards against a misbehaving nextCursor loop (100 pages)", async () => {
     const t = fakeMcpTransport();
     respond(t, (req) => (req.method === "initialize" ? okResult() : { tools: [], nextCursor: "forever" }));

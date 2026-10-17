@@ -93,13 +93,17 @@ async function openAuthorizePopup(authUrl: string): Promise<string> {
 
 /** Assemble the browser-host auth config. `redirectUri` is the host's landing
  *  page (must match what the server has registered / what DCR will register);
- *  `key` is optional — omit it and the session's own default (`mcp:` + server
- *  url) applies; `store` optionally swaps the persistence backend (default:
- *  localStorage — pass IndexedDB, in-memory, … to control where tokens live
- *  while keeping the popup dance). */
+ *  `server` (the authorization-server issuer) is optional — omitted, the issuer
+ *  is discovered from the MCP server per RFC 9728 (401 → WWW-Authenticate /
+ *  /.well-known/oauth-protected-resource); pass it to pre-configure/skip
+ *  discovery. `key` is optional — omit it and the session's own default
+ *  (`mcp:` + server url) applies; `store` optionally swaps the persistence
+ *  backend (default: localStorage — pass IndexedDB, in-memory, … to control
+ *  where tokens live while keeping the popup dance). */
 export function browserOAuth(opts: {
-  /** Authorization-server issuer (discovery + DCR base). */
-  server: string;
+  /** Authorization-server issuer; omit to discover it (RFC 9728) from the
+   *  MCP server URL the transport injects. */
+  server?: string;
   /** The host's https landing page the authorization code redirects to. */
   redirectUri: string;
   /** TokenStore key override; defaults to the session's `mcp:` + server url. */
@@ -108,8 +112,8 @@ export function browserOAuth(opts: {
   store?: TokenStore;
 }): McpOAuthConfig {
   return {
-    authorizationServer: opts.server,
     tokenStore: opts.store ?? localStorageStore(),
+    ...(opts.server !== undefined && { authorizationServer: opts.server }),
     ...(opts.key !== undefined ? { key: opts.key } : {}),
     redirectUri: opts.redirectUri,
     authorize: openAuthorizePopup,

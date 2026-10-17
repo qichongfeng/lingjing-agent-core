@@ -88,7 +88,7 @@ A `retry` option shapes both reconnects and request retries: `{ maxAttempts = 5,
 
 ### OAuth 2.1 (HTTP mode)
 
-Pass `auth` to authenticate against a browser-based OAuth 2.1 (RFC 9728) MCP server — full zero-dependency flow: RFC 8414 discovery, Dynamic Client Registration, PKCE (`S256`), and token refresh. The one environment-specific step — opening the browser and capturing the redirect — is delegated to your `authorize(url)` callback:
+Pass `auth` to authenticate against a browser-based OAuth 2.1 (RFC 9728) MCP server — full zero-dependency flow: RFC 9728 protected-resource discovery, RFC 8414 authorization-server discovery, Dynamic Client Registration, PKCE (`S256`), the RFC 8707 `resource` parameter, and token refresh. The one environment-specific step — opening the browser and capturing the redirect — is delegated to your `authorize(url)` callback:
 
 ```ts
 import { createMcpTools } from "@lingjing-agent/mcp";
@@ -102,8 +102,12 @@ const session = await createMcpTools({
       set: async (key, tokens) => saveToKeychain(key, tokens),
       clear: async (key) => deleteFromKeychain(key),
     },
+    // authorizationServer is OPTIONAL now: omitted, the issuer is discovered
+    // from the MCP server (401 → WWW-Authenticate resource_metadata →
+    // /.well-known/oauth-protected-resource); pass it to pre-configure/skip
+    // discovery.
     authorizationServer: "https://mcp-host",
-    scopes: ["openid"],
+    scopes: ["openid"],                    // optional: challenge/PRM scopes otherwise
     clientId: "…",                          // or omit for dynamic client registration
     authorize: async (url) => {
       // open `url` in a browser and return the redirect the user landed on
@@ -113,7 +117,7 @@ const session = await createMcpTools({
 });
 ```
 
-The transport injects `Authorization: Bearer <token>`, and on a `401` invalidates the access token only — the refresh grant runs first (the refresh token survives; rotation killed the access token, not the session), falling back to re-authorization only if that fails — then replays the request once, transparently. `TokenStore` is your persistence seam — keychain, a file, or in-memory.
+Authorization is lazy (per the MCP spec): the first request goes out with at most a silently-obtainable token (unexpired cache, else one refresh) — the interactive `authorize` dance only launches from a `401` replay, so a server that accepts unauthenticated requests never triggers one. On `401` the transport invalidates the access token only — the refresh grant runs first (the refresh token survives; rotation killed the access token, not the session), falling back to re-authorization only if that fails — then replays the request once, transparently. `TokenStore` is your persistence seam — keychain, a file, or in-memory.
 
 `redirectUri` overrides the default loopback redirect (`http://127.0.0.1/callback`, for CLI hosts with a local listener). Browser hosts pass their https landing page — it is registered verbatim with DCR and must match exactly at the authorize and exchange steps.
 
@@ -129,7 +133,8 @@ const session = await createMcpTools({
   name: "cloud",
   url: "https://mcp-host/mcp",
   auth: browserOAuth({
-    server: "https://mcp-host",
+    // server is optional — omitted, the issuer is discovered from the MCP
+    // server URL (RFC 9728); pass it to pre-configure/skip discovery.
     redirectUri: `${location.origin}/mcp/callback`,
     // key is optional — the session defaults to `mcp:` + server url; override
     // only for host-specific storage partitioning

@@ -38,15 +38,19 @@ const MAX_ERROR_SNIPPET = 512;
 const SSE_HARD_CAP_MS = 60_000;
 
 /** A non-session (>= 400, not the 404-with-session) HTTP error. `.status` lets
- *  McpClient classify transient (5xx/408/429) vs terminal (other 4xx). */
+ *  McpClient classify transient (5xx/408/429) vs terminal (other 4xx). A 401's
+ *  WWW-Authenticate challenge rides along on `.wwwAuthenticate` for the OAuth
+ *  replay path (RFC 9728 resource_metadata). */
 export class McpHttpError extends Error {
   override readonly name = "McpHttpError";
   readonly status: number;
   readonly statusText: string;
-  constructor(status: number, statusText: string, message: string) {
+  readonly wwwAuthenticate: string | undefined;
+  constructor(status: number, statusText: string, message: string, wwwAuthenticate: string | undefined = undefined) {
     super(message);
     this.status = status;
     this.statusText = statusText;
+    this.wwwAuthenticate = wwwAuthenticate;
   }
 }
 
@@ -70,7 +74,20 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOptions): McpTransp
   let protocolVersion: string | undefined;
   let msgListener: ((msg: JsonRpcMessage) => void) | undefined;
   let closed = false;
-  const oauth = opts.auth ? new OAuthSession(opts.auth, opts.auth.key ?? `mcp:${opts.url}`) : undefined;
+  // serverUrl (the MCP server this auth protects) and the transport fallback
+  // are injected here so hosts never wire them into auth themselves — and so
+  // discovery/DCR/token ride the SAME bridge (e.g. a wx.request adapter) as
+  // the JSON-RPC traffic instead of a missing fetchTransport().
+  const oauth = opts.auth
+    ? new OAuthSession(
+        {
+          ...opts.auth,
+          serverUrl: opts.auth.serverUrl ?? opts.url,
+          ...(opts.auth.transport === undefined && opts.transport !== undefined && { transport: opts.transport }),
+        },
+        opts.auth.key ?? `mcp:${opts.url}`,
+      )
+    : undefined;
 
   const transport = (): HttpTransport => {
     coreTransport ??= fetchTransport();
@@ -165,8 +182,11 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOptions): McpTransp
     }, capMs);
 
     try {
-      // One 401 replay (token refresh) — the common OAuth expiry case.
-      let authHeaders = await authHeader();
+      // Lazy authorization (MCP spec): the first request goes out with at most
+      // a silently-obtainable token (unexpired cache or one refresh) — the
+      // interactive dance only launches from the 401 replay below, so a server
+      // that accepts unauthenticated requests never pops an authorize window.
+      let authHeaders = await cachedAuthHeader();
       for (let attempt = 0; ; attempt++) {
         try {
           await postOnce(msg, authHeaders, controller, capMs, () => capFired);
@@ -174,8 +194,11 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOptions): McpTransp
         } catch (err) {
           const retryAuth = oauth !== undefined && attempt === 0 && err instanceof McpHttpError && err.status === 401;
           if (!retryAuth) throw err;
-          // Keep the refresh token: the 401 invalidated the access token, not
-          // the session — refresh first, re-authorize only if that fails.
+          // The 401's challenge steers discovery (RFC 9728 resource_metadata)
+          // and the scope; then keep the refresh token — the 401 invalidated
+          // the access token, not the session. authHeader() below is the only
+          // path that can run the interactive authorizeFlow.
+          if (err.wwwAuthenticate !== undefined) oauth.noteUnauthorized(err.wwwAuthenticate);
           await oauth.invalidateAccessToken();
           authHeaders = await authHeader();
         }
@@ -191,10 +214,20 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOptions): McpTransp
     }
   }
 
+  /** Full acquisition — MAY run the interactive authorizeFlow (401 replay). */
   async function authHeader(): Promise<Record<string, string>> {
     if (oauth === undefined) return {};
     const token = await oauth.getAccessToken();
     return { authorization: `Bearer ${token}` };
+  }
+
+  /** Pre-send: attach only a token obtainable without interaction (unexpired
+   *  cache, else one silent refresh). Never throws OAuth errors — a failure
+   *  here just sends the request unauthenticated and lets the 401 path react. */
+  async function cachedAuthHeader(): Promise<Record<string, string>> {
+    if (oauth === undefined) return {};
+    const token = await oauth.silentAccessToken();
+    return token === undefined ? {} : { authorization: `Bearer ${token}` };
   }
 
   async function postOnce(
@@ -223,10 +256,12 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOptions): McpTransp
         throw new McpSessionExpiredError(`${label}: HTTP 404 — session ${sessionId} expired`);
       }
       const snippet = body.slice(0, MAX_ERROR_SNIPPET).replace(/\s+/g, " ").trim();
+      const challengeHeader = resp.headers["www-authenticate"];
       throw new McpHttpError(
         resp.status,
         resp.statusText,
         `${label}: HTTP ${resp.status} ${resp.statusText}${snippet === "" ? "" : ` — ${snippet}`}`,
+        typeof challengeHeader === "string" ? challengeHeader : undefined,
       );
     }
 

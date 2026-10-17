@@ -40,6 +40,13 @@ describe("browserOAuth config", () => {
     const cfg = browserOAuth({ server: "https://as", redirectUri: "https://app/cb" });
     expect(cfg.key).toBeUndefined();
   });
+
+  it("server is optional — omitted, the issuer is discovered from the MCP server URL (RFC 9728)", () => {
+    const cfg = browserOAuth({ key: "k", redirectUri: "https://app/cb" });
+    expect(cfg.authorizationServer).toBeUndefined();
+    expect(cfg.key).toBe("k");
+    expect(typeof cfg.authorize).toBe("function");
+  });
 });
 
 describe("localStorage TokenStore", () => {
