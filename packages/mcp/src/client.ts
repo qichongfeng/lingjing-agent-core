@@ -1,11 +1,17 @@
-// McpClient — legacy-era (initialize handshake) JSON-RPC client for MCP.
+// McpClient — dual-era JSON-RPC client for MCP.
+//
+// Legacy era (default): initialize handshake (2024-11-05 … 2025-11-25),
+// session re-init on McpSessionExpiredError, notifications/cancelled on
+// timeout. Modern era (2026-07-28+, opt-in via era "modern"/"auto"): no
+// handshake — era probed with server/discover, every request carries its
+// version/identity in _meta + mirrored HTTP headers (see modern.ts), and a
+// -32022 picks a mutually supported version and retries once.
 //
 // Owns: request-id correlation, per-request timeout + abort, protocol version
-// negotiation, ping responses, and a one-shot session re-initialization when
-// the HTTP transport reports McpSessionExpiredError. Transport-agnostic via
-// the McpTransport seam; only the tools surface (initialize / tools/list /
-// tools/call / notifications/cancelled) is implemented — resources, prompts
-// and sampling are out of scope.
+// negotiation, ping responses. Transport-agnostic via the McpTransport seam;
+// only the tools surface (initialize / tools/list / tools/call /
+// notifications/cancelled) is implemented — resources, prompts and sampling
+// are out of scope.
 
 import { AbortError, TimeoutError, sleep } from "@lingjing-agent/core";
 import {
@@ -18,6 +24,24 @@ import {
   type JsonRpcRequest,
 } from "./json-rpc.js";
 import { McpSessionExpiredError, type McpTransport } from "./mcp-transport.js";
+import {
+  classifyModernHttpError,
+  extractHeaderAnnotations,
+  getCachedEra,
+  isInputRequiredResult,
+  LegacyEraIndicated,
+  McpInputRequiredError,
+  MCP_ERR_HEADER_MISMATCH,
+  modernHeaders,
+  modernMeta,
+  modernParamHeaders,
+  MODERN_PROTOCOL_VERSION,
+  parseDiscoverResult,
+  pickModernVersion,
+  setCachedEra,
+  type McpEra,
+} from "./modern.js";
+import { McpHttpError } from "./http-transport.js";
 
 /** The highest legacy version this client asks for; servers may answer lower. */
 export const REQUESTED_PROTOCOL_VERSION = "2025-11-25";
@@ -30,14 +54,18 @@ const MAX_ARGUMENTS_BYTES = 4 * 1024 * 1024;
 export class McpUnsupportedProtocolError extends Error {
   override readonly name = "McpUnsupportedProtocolError";
   readonly serverVersion: string;
+  /** Modern-era -32022: the versions the server advertised in error.data.supported. */
+  readonly supported: string[] | undefined;
 
-  constructor(serverVersion: string) {
+  constructor(serverVersion: string, supported: string[] | undefined = undefined) {
     super(
       `MCP server returned protocol version '${serverVersion}', which this client does not support. ` +
-        `This bridge speaks the legacy initialize era (${KNOWN_PROTOCOL_VERSIONS.join(", ")}); ` +
-        `versions from 2026-07-28 are modern-era (no initialize handshake) and not yet supported.`,
+        `This bridge speaks the legacy initialize era (${KNOWN_PROTOCOL_VERSIONS.join(", ")}) and the ` +
+        `modern-era versions from 2026-07-28 (era: "modern"/"auto") — no mutually supported version exists` +
+        (supported === undefined ? "" : ` (server supports: ${supported.join(", ")})`),
     );
     this.serverVersion = serverVersion;
+    this.supported = supported;
   }
 }
 
@@ -158,6 +186,17 @@ export interface McpClientOptions {
   /** Transient-failure retry: network loss, transport drop, HTTP 5xx/408/429.
    *  Logical timeouts and aborts are NOT retried (replay safety). */
   retry?: McpRetryOptions;
+  /**
+   * Protocol era. "legacy" (default — byte-identical handshake behavior, what
+   * stdio and direct-transport callers get), "modern" (2026-07-28+, no
+   * initialize), or "auto" (probe server/discover first, fall back to the
+   * handshake on a non-modern server; HTTP url-mode callers). Era is a
+   * property of the origin — "auto" consults/writes the per-origin cache via
+   * eraCacheKey.
+   */
+  era?: McpEra | "auto";
+  /** Cache key for era detection (defaults to the transport label). */
+  eraCacheKey?: string;
 }
 
 interface PendingEntry {
@@ -174,6 +213,12 @@ export class McpClient {
   private readonly clientInfo: { name: string; version: string };
   private readonly defaultTimeoutMs: number;
   private readonly retry: McpRetryOptions;
+  private readonly eraMode: McpEra | "auto";
+  private readonly eraCacheKey: string | undefined;
+  /** Resolved era; "unresolved" until connect() decides (auto probes). */
+  private era: "unresolved" | McpEra = "unresolved";
+  /** tool name → paramName → Mcp-Param-{Name} header name (modern x-mcp-header). */
+  private headerRegistry = new Map<string, Map<string, string>>();
   private nextId = 0;
   private readonly pending = new Map<number | string, PendingEntry>();
   private initResult: McpInitializeResult | undefined;
@@ -196,6 +241,12 @@ export class McpClient {
     this.clientInfo = opts.clientInfo ?? { name: "@lingjing-agent/mcp", version: "0.1.0" };
     this.defaultTimeoutMs = opts.requestTimeoutMs ?? 60_000;
     this.retry = opts.retry ?? { maxAttempts: 5, baseDelayMs: 250, maxDelayMs: 5000 };
+    this.eraMode = opts.era ?? "legacy";
+    this.eraCacheKey = opts.eraCacheKey ?? (this.eraMode === "auto" ? this.transport.label : undefined);
+    // Only "auto" starts unresolved (probe decides); legacy/modern are fixed
+    // from the start so e.g. notifications/cancelled gating is correct before
+    // the first connect.
+    if (this.eraMode !== "auto") this.era = this.eraMode;
     this.transport.onMessage((msg) => this.handleMessage(msg));
     this.transport.onClose((err) => this.onTransportClosed(err));
   }
@@ -245,8 +296,8 @@ export class McpClient {
     } catch (err) {
       if (err instanceof JsonRpcRemoteError || err instanceof McpSessionExpiredError) throw err;
       throw new Error(
-        `${this.transport.label}: initialize failed (${errMsg(err)}) — the server may require the ` +
-          `modern (2026-07-28+) MCP era, which this client does not speak yet`,
+        `${this.transport.label}: initialize failed (${errMsg(err)}) — if the server is modern-era ` +
+          `(2026-07-28+, no initialize handshake), connect with era "modern"/"auto"`,
         { cause: err },
       );
     }
@@ -264,12 +315,30 @@ export class McpClient {
     // of short-circuiting ensureConnected against a half-initialized session.
     this.connected = true;
     this.reinitRetried = false;
+    this.era = "legacy"; // auto fallback resolved: legacy in force from here on
     return result;
   }
 
   async connect(): Promise<McpInitializeResult> {
     if (this.closed) throw new Error("MCP client closed");
     try {
+      if (this.era === "modern") return await this.connectModern(false);
+      if (this.eraMode === "auto" && this.era === "unresolved") {
+        // Cached era (origin property, survives agent rebuilds) skips the probe.
+        const cached = this.eraCacheKey !== undefined ? getCachedEra(this.eraCacheKey) : undefined;
+        if (cached === "modern") return await this.connectModern(false);
+        if (cached === undefined) {
+          try {
+            return await this.connectModern(true); // doubles as the era probe
+          } catch (err) {
+            if (!(err instanceof LegacyEraIndicated)) throw err; // terminal — connect() wrapper closes
+            // Inconclusive probe (empty/unrecognized 400, non-discover 200,
+            // 401/405/5xx/timeout/network): the server is legacy-shaped.
+            // connect() throws with this as cause if the handshake then fails.
+            return await this.connectInternal();
+          }
+        }
+      }
       return await this.connectInternal();
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err));
@@ -277,6 +346,78 @@ export class McpClient {
       await this.transport.close(); // no leaked child/session
       throw err;
     }
+  }
+
+  /**
+   * Modern-era connect: server/discover with the modern _meta + mirror
+   * headers. With `probe` (era unresolved), unrecognized failures throw
+   * LegacyEraIndicated for the auto fallback; with the era already resolved
+   * modern (cache hit / reconnect), every failure surfaces as-is. -32022
+   * retries ONCE with the highest mutually supported version from
+   * data.supported.
+   */
+  private async connectModern(probe: boolean): Promise<McpInitializeResult> {
+    let version = MODERN_PROTOCOL_VERSION;
+    for (let attempt = 1; ; attempt++) {
+      let raw: unknown;
+      try {
+        raw = await this.requestOnce("server/discover", modernMeta(version, this.clientInfo), {}, "modern");
+      } catch (err) {
+        const inconclusive = (): Error => (probe ? new LegacyEraIndicated(err) : err instanceof Error ? err : new Error(String(err)));
+        if (err instanceof McpHttpError) {
+          const cls = classifyModernHttpError(err.status, err.rpcError);
+          if (cls.kind === "unsupported-version") {
+            const picked = pickModernVersion(cls.supported);
+            if (picked === undefined || attempt >= 2) {
+              const list = Array.isArray(cls.supported) ? cls.supported.filter((v): v is string => typeof v === "string") : undefined;
+              throw new McpUnsupportedProtocolError(version, list);
+            }
+            version = picked;
+            continue; // one version retry
+          }
+          if (cls.kind === "header-mismatch" || cls.kind === "missing-capability") {
+            // Our dressing is spec-correct: this is a client bug or an
+            // unsatisfiable server — never fall back to a handshake against it.
+            throw new Error(
+              `${this.transport.label}: modern handshake rejected (${err.message}) — header/capability requirements unmet`,
+              { cause: err },
+            );
+          }
+          if (cls.kind === "modern-not-found") break; // 404 + JSON-RPC: modern server without discover
+          throw inconclusive();
+        }
+        // 200 + JSON-RPC error body, timeout, network, 5xx… — inconclusive.
+        throw inconclusive();
+      }
+      const discover = parseDiscoverResult(raw);
+      if (discover === undefined) {
+        // A 200 that is not a discover result: test fakes / lenient legacy
+        // servers answering anything — do NOT skip the handshake.
+        throw probe
+          ? new LegacyEraIndicated(new Error(`${this.transport.label}: server/discover returned a non-discover result`))
+          : new Error(`${this.transport.label}: server/discover returned a non-discover result`);
+      }
+      this.finishModernConnect(version, {
+        capabilities: discover.capabilities,
+        serverInfo: discover.serverInfo ?? { name: "mcp-server", version: "unknown" },
+        ...(discover.instructions !== undefined && { instructions: discover.instructions }),
+      });
+      return this.initResult!;
+    }
+    // 404 + JSON-RPC body reached break: modern server, discover unavailable
+    // (spec-violating) — proceed with fabricated minimal metadata.
+    this.finishModernConnect(version, { capabilities: {}, serverInfo: { name: "mcp-server", version: "unknown" } });
+    return this.initResult!;
+  }
+
+  private finishModernConnect(version: string, partial: Omit<McpInitializeResult, "protocolVersion">): void {
+    this.initResult = { protocolVersion: version, ...partial };
+    this.negotiated = version;
+    this.transport.setProtocolVersion?.(version);
+    this.connected = true;
+    this.reinitRetried = false;
+    this.era = "modern";
+    if (this.eraCacheKey !== undefined) setCachedEra(this.eraCacheKey, "modern");
   }
 
   /** `tools/list`, following nextCursor pagination to exhaustion. */
@@ -300,6 +441,16 @@ export class McpClient {
       if (page.nextCursor === undefined || page.nextCursor === "") break;
       cursor = page.nextCursor;
     }
+    // Modern x-mcp-header registry: rebuilt on every list (including the
+    // tools/list_changed → refresh path) so schema changes re-mirror correctly.
+    if (this.era === "modern") {
+      const registry = new Map<string, Map<string, string>>();
+      for (const d of out) {
+        const { valid } = extractHeaderAnnotations(d.inputSchema);
+        if (valid.size > 0) registry.set(d.name, valid);
+      }
+      this.headerRegistry = registry;
+    }
     return out;
   }
 
@@ -315,7 +466,30 @@ export class McpClient {
     if (serialized !== undefined && serialized.length > MAX_ARGUMENTS_BYTES) {
       throw new Error(`MCP tool arguments exceed ${MAX_ARGUMENTS_BYTES} bytes (serialized)`);
     }
-    const raw = await this.request("tools/call", { name, arguments: arguments_ }, opts);
+    const send = (): Promise<unknown> => this.request("tools/call", { name, arguments: arguments_ }, opts);
+    let raw: unknown;
+    try {
+      raw = await send();
+    } catch (err) {
+      // HeaderMismatch on missing/mismatched Mcp-Param-* usually means a
+      // stale schema — re-list (refreshes the registry), retry ONCE.
+      if (
+        this.era === "modern" &&
+        err instanceof McpHttpError &&
+        err.status === 400 &&
+        err.rpcError?.code === MCP_ERR_HEADER_MISMATCH
+      ) {
+        await this.listTools();
+        raw = await send();
+      } else {
+        throw err;
+      }
+    }
+    if (isInputRequiredResult(raw)) {
+      // MRTR (SEP-2322): the server needs round-trip input we cannot give.
+      // Checked BEFORE asToolCallResult, which would mis-read it as malformed.
+      throw new McpInputRequiredError(raw.inputRequests);
+    }
     const result = asToolCallResult(raw);
     if (result === undefined) {
       throw new Error(`${this.transport.label}: tools/call returned a malformed result`);
@@ -449,7 +623,10 @@ export class McpClient {
         await this.transport.reopen?.();
         this.dead = false;
       }
-      await this.connectInternal();
+      // Modern reconnect = a cheap re-discover; a legacy handshake against a
+      // modern server would just fail (initialize is not a modern method).
+      if (this.era === "modern") await this.connectModern(false);
+      else await this.connectInternal();
     })().finally(() => {
       this.connecting = undefined;
     });
@@ -461,8 +638,30 @@ export class McpClient {
     return Math.floor(exp / 2 + Math.random() * (exp / 2));
   }
 
-  private requestOnce(method: string, params: unknown | undefined, opts: McpRequestOptions): Promise<unknown> {
+  private requestOnce(
+    method: string,
+    params: unknown | undefined,
+    opts: McpRequestOptions,
+    wireEra?: "modern" | "legacy",
+  ): Promise<unknown> {
     if (this.closed) return Promise.reject(this.closedError());
+    // Modern dressing is per-request: the probe sends modern while era is still
+    // unresolved (wireEra="modern"); everything legacy-path stays untouched.
+    const wire = wireEra ?? (this.era === "modern" ? "modern" : "legacy");
+    let headerBag: Record<string, string> | undefined;
+    if (wire === "modern") {
+      const version = this.negotiated ?? MODERN_PROTOCOL_VERSION;
+      params =
+        typeof params === "object" && params !== null
+          ? { ...(params as Record<string, unknown>), _meta: modernMeta(version, this.clientInfo) }
+          : { _meta: modernMeta(version, this.clientInfo) };
+      headerBag = modernHeaders(version, method, params);
+      if (method === "tools/call") {
+        const p = params as Record<string, unknown>;
+        const registry = typeof p["name"] === "string" ? this.headerRegistry.get(p["name"]) : undefined;
+        if (registry !== undefined) headerBag = { ...headerBag, ...modernParamHeaders(registry, p) };
+      }
+    }
     const id = ++this.nextId;
     let resolve!: (v: unknown) => void;
     let reject!: (e: Error) => void;
@@ -524,7 +723,9 @@ export class McpClient {
       try {
         await this.transport.send(
           msg,
-          opts.signal === undefined ? { timeoutMs } : { signal: opts.signal, timeoutMs },
+          opts.signal === undefined
+            ? { timeoutMs, ...(headerBag !== undefined && { headers: headerBag }) }
+            : { signal: opts.signal, timeoutMs, ...(headerBag !== undefined && { headers: headerBag }) },
         );
       } catch (err) {
         if (drop()) {
@@ -575,6 +776,10 @@ export class McpClient {
   }
 
   private sendCancelled(requestId: number | string, reason: string): void {
+    // Modern-era HTTP defines no client→server notifications; closing the
+    // response stream IS the cancellation. (Era "unresolved" = probe in
+    // flight — a throwaway request, nothing to cancel either.)
+    if (this.era !== "legacy") return;
     const n: JsonRpcNotification = {
       jsonrpc: "2.0",
       method: "notifications/cancelled",

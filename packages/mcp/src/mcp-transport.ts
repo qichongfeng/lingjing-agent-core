@@ -26,6 +26,13 @@ export interface McpTransportSendOptions {
    * stdio ignores it (cancellation is notifications/cancelled).
    */
   timeoutMs?: number;
+  /**
+   * Per-message request headers (modern-era mirror headers assembled by
+   * McpClient: mcp-protocol-version/mcp-method/mcp-name/mcp-param-*). The
+   * HTTP transport merges these LAST — after its static headers, session id,
+   * and auth; stdio ignores them (headers are an HTTP concept).
+   */
+  headers?: Record<string, string>;
 }
 
 export interface McpTransport {

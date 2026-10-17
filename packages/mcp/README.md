@@ -2,7 +2,7 @@
 
 **MCP client bridge** for [`@lingjing-agent/core`](https://www.npmjs.com/package/@lingjing-agent/core) — connect an external MCP server and surface its tools as core `Tool` objects you pass straight to `createAgent({ tools })`.
 
-- **Legacy initialize era only** (`2024-11-05` → `2025-11-25`, handshake-based): tools, resources and prompts are bridged (as tools — core has no first-class resource/prompt surface). Sampling, elicitation and the modern (`2026-07-28+`, handshake-less) era are out of scope.
+- **Dual-era**: legacy initialize era (`2024-11-05` → `2025-11-25`, handshake-based) and the modern stateless era (`2026-07-28+`) — url-mode `createMcpTools` defaults to `era: "auto"` (probe `server/discover`, fall back to the handshake on legacy servers; era cached per origin), `McpClient` defaults to legacy. Modern dressing is spec-complete: per-request `_meta`, mirrored `MCP-Protocol-Version`/`Mcp-Method`/`Mcp-Name` headers, `x-mcp-header` → `Mcp-Param-*` mirroring with the Base64 sentinel encoding, `-32022` version retry. MRTR (`InputRequiredResult`) surfaces as `McpInputRequiredError`. Tools, resources and prompts are bridged (as tools — core has no first-class resource/prompt surface); sampling and elicitation are out of scope.
 - **Cross-runtime** entry: zero `node:*` imports — the Streamable-HTTP transport rides core's injectable `HttpTransport`, so browser/Edge/WeChat mini-program hosts work with zero polyfills.
 - **stdio** transport lives in the `@lingjing-agent/mcp/node` subpath (Node/Electron/Tauri-main only).
 

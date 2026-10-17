@@ -39,6 +39,7 @@ import {
 import { createHttpMcpTransport } from "./http-transport.js";
 import type { McpTransport } from "./mcp-transport.js";
 import type { McpOAuthConfig } from "./oauth.js";
+import { eraCacheKeyFor, extractHeaderAnnotations } from "./modern.js";
 
 const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
 const DEFAULT_MAX_TOOLS = 200;
@@ -74,6 +75,13 @@ export interface McpToolsOptions {
   bridgeResources?: boolean;
   /** Bridge prompts/list + prompts/get as read-only tools. Default true (when the server advertises `capabilities.prompts`). */
   bridgePrompts?: boolean;
+  /**
+   * Protocol era for url-mode: "auto" (default) probes server/discover first
+   * and falls back to the legacy initialize handshake on non-modern servers;
+   * "legacy" skips the probe. Transport mode is always legacy (stdio has no
+   * HTTP status codes to drive the fallback).
+   */
+  era?: "auto" | "legacy";
 }
 
 export interface McpToolsSession {
@@ -223,6 +231,12 @@ export async function createMcpTools(opts: McpToolsOptions): Promise<McpToolsSes
     transport,
     ...(opts.requestTimeoutMs !== undefined && { requestTimeoutMs: opts.requestTimeoutMs }),
     ...(opts.retry !== undefined && { retry: opts.retry }),
+    // url mode defaults to dual-era (modern probe → legacy fallback); the
+    // era cache is keyed by origin so agent rebuilds skip the probe.
+    ...(hasUrl && {
+      era: opts.era === "legacy" ? "legacy" : "auto",
+      ...(opts.era !== "legacy" && { eraCacheKey: eraCacheKeyFor(opts.url ?? "") }),
+    }),
   });
   let init: McpInitializeResult;
   try {
@@ -254,6 +268,16 @@ export async function createMcpTools(opts: McpToolsOptions): Promise<McpToolsSes
         throw new Error(`MCP tool name collision after sanitization: '${name}' (server '${opts.name}') — ${phase}`);
       }
       seen.add(name);
+      // Spec (2026-07-28): a tool whose x-mcp-header annotations are invalid
+      // (wrong placement/type, bad name, duplicates) is rejected WHOLE — other
+      // tools must still bridge, so warn + skip rather than fail the connect.
+      const { invalid } = extractHeaderAnnotations(d.inputSchema);
+      if (invalid.length > 0) {
+        console.warn(
+          `[mcp] dropped tool '${d.name}' from server '${opts.name}': invalid x-mcp-header annotation (${invalid.join("; ")})`,
+        );
+        continue;
+      }
       const destructive = destructivePolicy === "confirm" && d.annotations?.destructiveHint === true;
       tools.push({
         name,

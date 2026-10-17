@@ -2,7 +2,7 @@
 // calls, a byte-level body chunker, and an in-memory McpTransport fake.
 
 import type { ToolCallContext } from "@lingjing-agent/core";
-import type { McpTransport } from "../src/mcp-transport.js";
+import type { McpTransport, McpTransportSendOptions } from "../src/mcp-transport.js";
 import type { JsonRpcMessage } from "../src/json-rpc.js";
 
 export function testCtx(signal?: AbortSignal): ToolCallContext {
@@ -33,6 +33,8 @@ export function bodyOf(text: string, chunkSize = 7): AsyncIterable<Uint8Array> {
 export interface FakeMcpTransport extends McpTransport {
   /** Every message handed to send(), in order. */
   readonly sent: JsonRpcMessage[];
+  /** Per-send options (modern header bags etc.), index-aligned with `sent`. */
+  readonly sentOpts: (McpTransportSendOptions | undefined)[];
   /** Program per-send behavior (e.g. throw McpSessionExpiredError). Default: resolve. */
   onSend?: ((msg: JsonRpcMessage) => void | Promise<void>) | undefined;
   /** Inject a server→client message through the registered listener. */
@@ -52,6 +54,7 @@ export interface FakeMcpTransport extends McpTransport {
  *  reconnectable (dead) rather than terminal. */
 export function fakeMcpTransport(label = "fake", reopenable = false): FakeMcpTransport {
   const sent: JsonRpcMessage[] = [];
+  const sentOpts: (McpTransportSendOptions | undefined)[] = [];
   const protocolVersionCalls: string[] = [];
   let resetSessionCalls = 0;
   let reopenCalls = 0;
@@ -61,6 +64,7 @@ export function fakeMcpTransport(label = "fake", reopenable = false): FakeMcpTra
   const t: FakeMcpTransport = {
     label,
     sent,
+    sentOpts,
     protocolVersionCalls,
     get resetSessionCalls() {
       return resetSessionCalls;
@@ -71,8 +75,9 @@ export function fakeMcpTransport(label = "fake", reopenable = false): FakeMcpTra
     get closed() {
       return closed;
     },
-    send(msg) {
+    send(msg, opts) {
       sent.push(msg);
+      sentOpts.push(opts);
       return t.onSend ? Promise.resolve(t.onSend(msg)).then(() => undefined) : Promise.resolve();
     },
     onMessage(l) {

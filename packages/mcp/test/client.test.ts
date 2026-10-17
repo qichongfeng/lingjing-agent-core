@@ -116,7 +116,7 @@ describe("connect handshake", () => {
       throw new Error("HTTP 400 Bad Request");
     };
     const c = new McpClient({ transport: t });
-    await expect(c.connect()).rejects.toThrow(/modern \(2026-07-28\+\) MCP era/);
+    await expect(c.connect()).rejects.toThrow(/modern-era/);
     expect(t.closed).toBe(true);
   });
 

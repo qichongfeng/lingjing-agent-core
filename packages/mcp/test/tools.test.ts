@@ -355,6 +355,16 @@ describe("url mode end to end (fake HttpTransport)", () => {
         body: bodyOf(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }), 17),
       });
       if (body.method === "initialize") return respond(initResult(), { "mcp-session-id": "sess-1" });
+      if (body.method === "server/discover") {
+        // Legacy-shaped server: unknown method → 200 + JSON-RPC error. The
+        // url-mode era probe reads this and falls back to initialize.
+        return {
+          status: 200,
+          statusText: "OK",
+          headers: { "content-type": "application/json" },
+          body: bodyOf(JSON.stringify({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "Method not found: server/discover" } })),
+        };
+      }
       if (body.method === "tools/list") {
         return respond({ tools: [{ name: "ping_tool", inputSchema: { type: "object" } }] });
       }
@@ -366,10 +376,12 @@ describe("url mode end to end (fake HttpTransport)", () => {
     const s = await createMcpTools({ name: "remote", url: "https://srv/mcp", httpTransport: httpFake });
     expect(s.tools.map((tool) => tool.name)).toEqual(["remote__ping_tool"]);
     expect(s.tools[0]!.permissions?.network).toBe(true);
-    // Every POST after initialize carries the session id.
+    // Every POST after initialize carries the session id. The era probe
+    // (server/discover, legacy-fallback) is the first POST; initialize follows.
     const posts = reqs.filter((r) => r.method === "POST");
-    expect("mcp-session-id" in posts[0]!.headers).toBe(false); // initialize mints it
-    expect(posts.slice(1).every((r) => r.headers["mcp-session-id"] === "sess-1")).toBe(true);
+    expect(JSON.parse(posts[0]!.body ?? "{}").method).toBe("server/discover");
+    expect("mcp-session-id" in posts[1]!.headers).toBe(false); // initialize mints it
+    expect(posts.slice(2).every((r) => r.headers["mcp-session-id"] === "sess-1")).toBe(true);
     const out = await s.tools[0]!.execute({ a: 1 }, testCtx());
     expect(out).toEqual({ content: "pong" });
     await s.close(); // DELETE with session

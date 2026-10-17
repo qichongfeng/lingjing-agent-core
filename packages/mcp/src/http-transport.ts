@@ -1,6 +1,10 @@
-// Streamable HTTP transport (legacy 2025-03-26+ semantics) over core's
-// HttpTransport — so the SAME bridge reaches MCP servers from Node, browsers,
-// Edge, and mini-programs (inject a wx.request-backed HttpTransport).
+// Streamable HTTP transport over core's HttpTransport — so the SAME bridge
+// reaches MCP servers from Node, browsers, Edge, and mini-programs (inject a
+// wx.request-backed HttpTransport). Speaks both eras: legacy (2025-03-26+
+// initialize-handshake semantics, Mcp-Session-Id capture/echo) and modern
+// (2026-07-28+: the mirror headers arrive per-message via send opts.headers —
+// this transport only merges and reports JSON-RPC error bodies, era logic
+// lives in McpClient/modern.ts).
 //
 // Wire rules implemented here:
 // - Every message is a POST of one JSON-RPC message; Accept both
@@ -40,17 +44,28 @@ const SSE_HARD_CAP_MS = 60_000;
 /** A non-session (>= 400, not the 404-with-session) HTTP error. `.status` lets
  *  McpClient classify transient (5xx/408/429) vs terminal (other 4xx). A 401's
  *  WWW-Authenticate challenge rides along on `.wwwAuthenticate` for the OAuth
- *  replay path (RFC 9728 resource_metadata). */
+ *  replay path (RFC 9728 resource_metadata). `.rpcError` carries the JSON-RPC
+ *  error object when the error-status body parses as one — modern-era servers
+ *  speak errors as 400/404 + JSON-RPC bodies, and era detection reads them
+ *  (e.g. -32022 UnsupportedProtocolVersion with its supported list). */
 export class McpHttpError extends Error {
   override readonly name = "McpHttpError";
   readonly status: number;
   readonly statusText: string;
   readonly wwwAuthenticate: string | undefined;
-  constructor(status: number, statusText: string, message: string, wwwAuthenticate: string | undefined = undefined) {
+  readonly rpcError: { code: number; message: string; data?: unknown } | undefined;
+  constructor(
+    status: number,
+    statusText: string,
+    message: string,
+    wwwAuthenticate: string | undefined = undefined,
+    rpcError: { code: number; message: string; data?: unknown } | undefined = undefined,
+  ) {
     super(message);
     this.status = status;
     this.statusText = statusText;
     this.wwwAuthenticate = wwwAuthenticate;
+    this.rpcError = rpcError;
   }
 }
 
@@ -189,7 +204,7 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOptions): McpTransp
       let authHeaders = await cachedAuthHeader();
       for (let attempt = 0; ; attempt++) {
         try {
-          await postOnce(msg, authHeaders, controller, capMs, () => capFired);
+          await postOnce(msg, authHeaders, controller, capMs, () => capFired, sendOpts?.headers);
           return;
         } catch (err) {
           const retryAuth = oauth !== undefined && attempt === 0 && err instanceof McpHttpError && err.status === 401;
@@ -236,11 +251,14 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOptions): McpTransp
     controller: AbortController,
     capMs: number,
     capFired: () => boolean,
+    sendHeaders: Record<string, string> | undefined,
   ): Promise<void> {
     const resp = await transport()({
       url: opts.url,
       method: "POST",
-      headers: { ...headersFor(), ...authHeaders },
+      // Per-message headers (modern-era mirror headers) merge LAST so they
+      // win over anything static without clobbering auth.
+      headers: { ...headersFor(), ...authHeaders, ...(sendHeaders ?? {}) },
       body: JSON.stringify(msg),
       signal: controller.signal,
     });
@@ -257,11 +275,19 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOptions): McpTransp
       }
       const snippet = body.slice(0, MAX_ERROR_SNIPPET).replace(/\s+/g, " ").trim();
       const challengeHeader = resp.headers["www-authenticate"];
+      // Modern-era servers return 400/404 with a JSON-RPC error body — keep it
+      // parsed on the error so era detection can read codes (-32022 etc.).
+      const rpc = parseJsonRpcMessage(body);
+      const rpcError =
+        rpc !== undefined && "error" in rpc && rpc.error !== undefined && typeof rpc.error.code === "number"
+          ? rpc.error
+          : undefined;
       throw new McpHttpError(
         resp.status,
         resp.statusText,
         `${label}: HTTP ${resp.status} ${resp.statusText}${snippet === "" ? "" : ` — ${snippet}`}`,
         typeof challengeHeader === "string" ? challengeHeader : undefined,
+        rpcError,
       );
     }
 

@@ -2,10 +2,11 @@
 //
 // Client: bridges an external MCP server's tools into core `Tool` objects
 // (createMcpTools). Server: exposes core `Tool`s to external MCP clients
-// (createMcpServer). Hand-rolled JSON-RPC, legacy initialize era
-// (2024-11-05 … 2025-11-25). Tools, resources, and prompts are bridged
-// (as tools — core has no first-class resource/prompt surface); the modern
-// (2026-07-28+) stateless era is a separate, later concern.
+// (createMcpServer). Hand-rolled JSON-RPC, dual-era: legacy initialize era
+// (2024-11-05 … 2025-11-25) and modern stateless era (2026-07-28+, no
+// handshake — per-request _meta + mirrored HTTP headers, era probed via
+// server/discover with per-origin caching). Tools, resources, and prompts are
+// bridged (as tools — core has no first-class resource/prompt surface).
 //
 // Zero node:* imports: safe to bundle into browser/Edge/mini-program hosts.
 // The Streamable HTTP transport rides core's HttpTransport (inject a
@@ -55,6 +56,17 @@ export type { OAuthTokens, TokenStore, McpOAuthConfig } from "./oauth.js";
 
 export { McpSessionExpiredError } from "./mcp-transport.js";
 export type { McpTransport, McpTransportSendOptions } from "./mcp-transport.js";
+
+// Modern era (2026-07-28+): wire rules, era cache, probe classification.
+export {
+  MODERN_PROTOCOL_VERSION,
+  MODERN_KNOWN_PROTOCOL_VERSIONS,
+  MCP_ERR_HEADER_MISMATCH,
+  MCP_ERR_MISSING_CAPABILITY,
+  MCP_ERR_UNSUPPORTED_VERSION,
+  McpInputRequiredError,
+} from "./modern.js";
+export type { McpEra, McpDiscoverResult, ModernErrorKind, RpcErrorShape } from "./modern.js";
 
 export { JsonRpcRemoteError } from "./json-rpc.js";
 export type {

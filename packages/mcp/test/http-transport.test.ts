@@ -294,6 +294,6 @@ describe("client + http transport end to end", () => {
     const { t } = httpScript([{ status: 400, statusText: "Bad Request", body: bodyOf("missing MCP-Protocol-Version") }]);
     const mt = createHttpMcpTransport({ url: "https://srv/mcp", transport: t });
     const c = new McpClient({ transport: mt });
-    await expect(c.connect()).rejects.toThrow(/modern \(2026-07-28\+\) MCP era/);
+    await expect(c.connect()).rejects.toThrow(/modern-era/);
   });
 });
