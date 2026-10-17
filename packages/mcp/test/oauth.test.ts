@@ -37,6 +37,7 @@ function resp(status: number, body: unknown, headers: Record<string, string> = {
 }
 
 const METADATA = {
+  issuer: "https://idp",
   authorization_endpoint: "https://idp/authorize",
   token_endpoint: "https://idp/token",
   registration_endpoint: "https://idp/register",
@@ -250,6 +251,43 @@ const PRM = {
   authorization_servers: ["https://idp"],
   scopes_supported: ["prm-a", "prm-b"],
 };
+
+// ---------- AS metadata discovery (RFC 8414 + OIDC, MCP auth spec MUSTs) ----------
+
+describe("OAuthSession — authorization-server metadata discovery", () => {
+  it("rejects a metadata document whose issuer does not match (anti-poisoning)", async () => {
+    const { store } = memStore();
+    const poisoned = { ...METADATA, issuer: "https://attacker" };
+    const t: HttpTransport = async (req) => {
+      // every candidate endpoint serves the poisoned document
+      if (req.url.includes("/.well-known/")) return resp(200, poisoned);
+      return resp(404, {});
+    };
+    const s = new OAuthSession({ tokenStore: store, authorizationServer: "https://idp", transport: t, authorize: echoAuthorize() }, "key");
+    await expect(s.getAccessToken()).rejects.toThrow(/issuer mismatch/);
+  });
+
+  it("falls back to OpenID Connect discovery when RFC 8414 endpoints 404", async () => {
+    const { store } = memStore();
+    const reqs: HttpTransportRequest[] = [];
+    const t: HttpTransport = async (req) => {
+      reqs.push(req);
+      if (req.url === "https://idp/.well-known/oauth-authorization-server") return resp(404, {});
+      if (req.url === "https://idp/.well-known/openid-configuration") return resp(200, METADATA);
+      if (req.url === METADATA.registration_endpoint) return resp(200, { client_id: "client-1" });
+      if (req.url === METADATA.token_endpoint) return resp(200, { access_token: "oidc-at" });
+      return resp(404, {});
+    };
+    const s = new OAuthSession({ tokenStore: store, authorizationServer: "https://idp", transport: t, authorize: echoAuthorize() }, "key");
+    await expect(s.getAccessToken()).resolves.toBe("oidc-at");
+    // RFC 8414 endpoint tried first, OIDC second (spec priority order)
+    const wellKnowns = urls(reqs).filter((u) => u.includes("/.well-known/"));
+    expect(wellKnowns).toEqual([
+      "https://idp/.well-known/oauth-authorization-server",
+      "https://idp/.well-known/openid-configuration",
+    ]);
+  });
+});
 
 /** Scripted transport with selectable PRM availability (path-inserted / root
  *  variants), plus the AS metadata / DCR / token endpoints discovery feeds. */

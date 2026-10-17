@@ -64,6 +64,9 @@ export interface McpOAuthConfig {
 }
 
 interface ServerMetadata {
+  /** MUST equal the issuer the well-known URL was built from (RFC 8414 §3.3 /
+   *  OIDC §4.3 — anti-poisoning check; a mismatched document is rejected). */
+  issuer: string;
   authorization_endpoint: string;
   token_endpoint: string;
   registration_endpoint?: string;
@@ -73,17 +76,26 @@ class OAuthError extends Error {
   override readonly name = "McpOAuthError";
 }
 
-/** RFC 8414 §5: insert /.well-known/oauth-authorization-server between the
- *  host and path components of the issuer — NOT append at the end. An issuer
- *  like https://auth.example.com/realms/myrealm (Keycloak) must yield
- *  https://auth.example.com/.well-known/oauth-authorization-server/realms/myrealm;
- *  appending would 404 against every AS whose issuer has a path. */
-function wellKnownUrl(issuer: string): string {
+/** RFC 8414 + OIDC Discovery candidates, in the priority order the MCP auth
+ *  spec prescribes (clients MUST try multiple endpoints): oauth-authorization-
+ *  server (path-INSERTED, RFC 8414 §5 — an issuer like https://auth.example.com/
+ *  realms/myrealm yields …/.well-known/oauth-authorization-server/realms/myrealm,
+ *  appending would 404 against every path-carrying issuer), then the two OIDC
+ *  forms (path-inserted, path-appended) for ASes that only speak OpenID Connect
+ *  Discovery. No-path issuers try the two root suffixes. */
+function wellKnownCandidates(issuer: string): string[] {
   const base = issuer.replace(/\/+$/, "");
   const pathStart = base.indexOf("/", base.indexOf("://") + 3);
-  return pathStart === -1
-    ? `${base}/.well-known/oauth-authorization-server`
-    : `${base.slice(0, pathStart)}/.well-known/oauth-authorization-server${base.slice(pathStart)}`;
+  if (pathStart === -1) {
+    return [`${base}/.well-known/oauth-authorization-server`, `${base}/.well-known/openid-configuration`];
+  }
+  const origin = base.slice(0, pathStart);
+  const path = base.slice(pathStart);
+  return [
+    `${origin}/.well-known/oauth-authorization-server${path}`,
+    `${origin}/.well-known/openid-configuration${path}`,
+    `${origin}${path}/.well-known/openid-configuration`,
+  ];
 }
 
 /** RFC 9728 well-known candidates for an MCP server URL, in the order the MCP
@@ -441,22 +453,41 @@ export class OAuthSession {
     // Pre-configured issuer wins outright (zero PRM requests); else discover it
     // once from the MCP server's protected-resource metadata (RFC 9728).
     const issuer = this.config.authorizationServer ?? (this.issuer ??= await this.discoverIssuer());
-    const controller = new AbortController();
-    const resp = await this.transport()({
-      url: wellKnownUrl(issuer),
-      method: "GET",
-      headers: { accept: "application/json" },
-      signal: controller.signal,
-    });
-    if (resp.status >= 400) {
-      throw new OAuthError(`Authorization server discovery failed (${resp.status})`);
+    const failures: string[] = [];
+    for (const url of wellKnownCandidates(issuer)) {
+      let m: ServerMetadata;
+      try {
+        const controller = new AbortController();
+        const resp = await this.transport()({
+          url,
+          method: "GET",
+          headers: { accept: "application/json" },
+          signal: controller.signal,
+        });
+        if (resp.status >= 400) {
+          failures.push(`${url} → ${resp.status}`);
+          continue;
+        }
+        m = (await parseJson(resp)) as ServerMetadata;
+      } catch (err) {
+        failures.push(`${url} → ${err instanceof Error ? err.message : String(err)}`);
+        continue;
+      }
+      // Anti-poisoning (RFC 8414 §3.3 / MCP auth spec MUST): the document's
+      // issuer MUST equal the identifier the URL was built from — a mismatch
+      // means the endpoints inside are someone else's; never use them.
+      if (m.issuer !== issuer) {
+        failures.push(`${url} → issuer mismatch (document claims ${JSON.stringify(m.issuer)})`);
+        continue;
+      }
+      if (!m.authorization_endpoint || !m.token_endpoint) {
+        failures.push(`${url} → missing authorization_endpoint/token_endpoint`);
+        continue;
+      }
+      this.metadata = m;
+      return m;
     }
-    const m = (await parseJson(resp)) as ServerMetadata;
-    if (!m.authorization_endpoint || !m.token_endpoint) {
-      throw new OAuthError("Authorization server metadata missing authorization_endpoint/token_endpoint");
-    }
-    this.metadata = m;
-    return m;
+    throw new OAuthError(`Authorization server discovery failed (${failures.join("; ")})`);
   }
 
   private async registerClient(meta: ServerMetadata): Promise<void> {
